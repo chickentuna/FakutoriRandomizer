@@ -1,0 +1,105 @@
+{
+  "Version": 1,
+  "WorkspaceRootPath": "C:\\Users\\Julien\\Dev\\FakutoriArchipelago\\",
+  "Documents": [
+    {
+      "AbsoluteMoniker": "D:0:0:{15C57D2F-FBE4-C69A-DCBA-D1DF326E9670}|ArchipelagoBepin5Template.csproj|c:\\users\\julien\\dev\\fakutoriarchipelago\\plugin.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{15C57D2F-FBE4-C69A-DCBA-D1DF326E9670}|ArchipelagoBepin5Template.csproj|solutionrelative:plugin.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{15C57D2F-FBE4-C69A-DCBA-D1DF326E9670}|ArchipelagoBepin5Template.csproj|c:\\users\\julien\\dev\\fakutoriarchipelago\\archipelagobepin5template.csproj||{FA3CD31E-987B-443A-9B81-186104E8DAC1}|",
+      "RelativeMoniker": "D:0:0:{15C57D2F-FBE4-C69A-DCBA-D1DF326E9670}|ArchipelagoBepin5Template.csproj|solutionrelative:archipelagobepin5template.csproj||{FA3CD31E-987B-443A-9B81-186104E8DAC1}|"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{15C57D2F-FBE4-C69A-DCBA-D1DF326E9670}|ArchipelagoBepin5Template.csproj|c:\\users\\julien\\dev\\fakutoriarchipelago\\archipelago\\archipelagodata.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{15C57D2F-FBE4-C69A-DCBA-D1DF326E9670}|ArchipelagoBepin5Template.csproj|solutionrelative:archipelago\\archipelagodata.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{15C57D2F-FBE4-C69A-DCBA-D1DF326E9670}|ArchipelagoBepin5Template.csproj|c:\\users\\julien\\dev\\fakutoriarchipelago\\utils\\archipelagoconsole.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{15C57D2F-FBE4-C69A-DCBA-D1DF326E9670}|ArchipelagoBepin5Template.csproj|solutionrelative:utils\\archipelagoconsole.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{15C57D2F-FBE4-C69A-DCBA-D1DF326E9670}|ArchipelagoBepin5Template.csproj|c:\\users\\julien\\dev\\fakutoriarchipelago\\archipelago\\archipelagoclient.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{15C57D2F-FBE4-C69A-DCBA-D1DF326E9670}|ArchipelagoBepin5Template.csproj|solutionrelative:archipelago\\archipelagoclient.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    }
+  ],
+  "DocumentGroupContainers": [
+    {
+      "Orientation": 0,
+      "VerticalTabListWidth": 256,
+      "DocumentGroups": [
+        {
+          "DockedWidth": 200,
+          "SelectedChildIndex": 0,
+          "Children": [
+            {
+              "$type": "Document",
+              "DocumentIndex": 0,
+              "Title": "Plugin.cs",
+              "DocumentMoniker": "C:\\Users\\Julien\\Dev\\FakutoriArchipelago\\Plugin.cs",
+              "RelativeDocumentMoniker": "Plugin.cs",
+              "ToolTip": "C:\\Users\\Julien\\Dev\\FakutoriArchipelago\\Plugin.cs",
+              "RelativeToolTip": "Plugin.cs",
+              "ViewState": "AgIAADUAAAAAAAAAAAAAAEsAAABQAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-02-22T15:13:23.047Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 1,
+              "Title": "ArchipelagoBepin5Template.csproj",
+              "DocumentMoniker": "C:\\Users\\Julien\\Dev\\FakutoriArchipelago\\ArchipelagoBepin5Template.csproj",
+              "RelativeDocumentMoniker": "ArchipelagoBepin5Template.csproj",
+              "ToolTip": "C:\\Users\\Julien\\Dev\\FakutoriArchipelago\\ArchipelagoBepin5Template.csproj",
+              "RelativeToolTip": "ArchipelagoBepin5Template.csproj",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000758|",
+              "WhenOpened": "2026-02-22T15:29:25.039Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 2,
+              "Title": "ArchipelagoData.cs",
+              "DocumentMoniker": "C:\\Users\\Julien\\Dev\\FakutoriArchipelago\\Archipelago\\ArchipelagoData.cs",
+              "RelativeDocumentMoniker": "Archipelago\\ArchipelagoData.cs",
+              "ToolTip": "C:\\Users\\Julien\\Dev\\FakutoriArchipelago\\Archipelago\\ArchipelagoData.cs",
+              "RelativeToolTip": "Archipelago\\ArchipelagoData.cs",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAABgAAAASAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-02-22T15:13:21.614Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 3,
+              "Title": "ArchipelagoConsole.cs",
+              "DocumentMoniker": "C:\\Users\\Julien\\Dev\\FakutoriArchipelago\\Utils\\ArchipelagoConsole.cs",
+              "RelativeDocumentMoniker": "Utils\\ArchipelagoConsole.cs",
+              "ToolTip": "C:\\Users\\Julien\\Dev\\FakutoriArchipelago\\Utils\\ArchipelagoConsole.cs",
+              "RelativeToolTip": "Utils\\ArchipelagoConsole.cs",
+              "ViewState": "AgIAABQAAAAAAAAAAAAQwCMAAAAhAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-02-22T15:20:50.077Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 4,
+              "Title": "ArchipelagoClient.cs",
+              "DocumentMoniker": "C:\\Users\\Julien\\Dev\\FakutoriArchipelago\\Archipelago\\ArchipelagoClient.cs",
+              "RelativeDocumentMoniker": "Archipelago\\ArchipelagoClient.cs",
+              "ToolTip": "C:\\Users\\Julien\\Dev\\FakutoriArchipelago\\Archipelago\\ArchipelagoClient.cs",
+              "RelativeToolTip": "Archipelago\\ArchipelagoClient.cs",
+              "ViewState": "AgIAAGUAAAAAAAAAAAAIwA8AAAAhAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-02-22T14:59:23.1Z",
+              "EditorCaption": ""
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
