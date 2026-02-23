@@ -62,6 +62,9 @@
       <Reference Include="Newtonsoft.Json">
         <HintPath>..\..\.nuget\packages\archipelago.multiclient.net\6.6.0\lib\netstandard2.0\Newtonsoft.Json.dll</HintPath>
       </Reference>
+      <Reference Include="Sirenix.Serialization">
+        <HintPath>lib\Sirenix.Serialization.dll</HintPath>
+      </Reference>
       <Reference Include="UnityEngine.UI">
         <HintPath>E:\SteamLibrary\steamapps\common\Fakutori Demo\Fakutori_Data\Managed\UnityEngine.UI.dll</HintPath>
       </Reference>

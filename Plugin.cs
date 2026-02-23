@@ -4,6 +4,9 @@ using FakutoriArchipelago.Archipelago;
 using FakutoriArchipelago.Utils;
 using HarmonyLib;
 using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Threading;
 using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.UI;
@@ -23,6 +26,10 @@ public class Plugin : BaseUnityPlugin
     public static ManualLogSource BepinLogger;
     public static ArchipelagoClient ArchipelagoClient;
 
+    public static bool didRecipeDump = false;
+    public static bool didBlockDump = false;
+
+
     private void Awake()
     {
         // Plugin startup logic
@@ -34,8 +41,7 @@ public class Plugin : BaseUnityPlugin
         var harmony = new Harmony("com.chickentuna.archipelago");
         harmony.PatchAll(typeof(Plugin));
         harmony.PatchAll(typeof(UnlockBlockPatch));
-        
-        
+
     }
 
 
@@ -44,6 +50,7 @@ public class Plugin : BaseUnityPlugin
 
 [HarmonyPatch(typeof(ProgressManager))]
 internal class UnlockBlockPatch
+        
 {
 
     //	public void OnElementBlockSpawned(BlockData blockData, GridCell onCell)
@@ -76,8 +83,62 @@ internal class UnlockBlockPatch
             AbstractSingleton<TimeManager>.Instance.OnTick.AddListener(ui.OnTick);
         else
             Plugin.BepinLogger.LogInfo("UI not found on tick");
+
+        var blocksManager = AbstractSingleton<BlocksManager>.Instance;
+        var progressManager = AbstractSingleton<ProgressManager>.Instance;
+
+        if (!Plugin.didBlockDump)
+        {
+            var ElementBlocksField = AccessTools.Field(typeof(BlocksLibrary), "ElementBlocks");
+            var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
+            var ElementBlocks = (BlockData[])ElementBlocksField.GetValue(lib);
+
+            if (ElementBlocks == null)
+            {
+                Plugin.BepinLogger.LogInfo("ElementBlocks is null!");
+                return;
+            }
+
+            foreach (var block in ElementBlocks)
+            {
+                Plugin.BepinLogger.LogInfo($"Block: {block.blockName}, ID: {block.blockId}, color: {block.color}");
+            }
+
+            Plugin.didBlockDump = true;
+
+            //var field = AccessTools.Field(typeof(ProgressManager), "blocksProgress");
+            //var blocksProgress = (SortedDictionary<int, BlockProgress>) field.GetValue(progressManager);
+
+
+        }
+        if (!Plugin.didRecipeDump)
+        {
+            string path = Path.Combine(Paths.PluginPath, "recipes_dump.txt");
+
+            var RecipesField = AccessTools.Field(typeof(BlocksLibrary), "Recipes");
+            var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
+            var Recipes = (Recipe[])RecipesField.GetValue(lib);
+
+            if (Recipes == null)
+            {
+                Plugin.BepinLogger.LogInfo("Recipes is null!");
+                return;
+            }
+
+            
+            RecipeDumper.DumpRecipes(Recipes, path);
+
+            Plugin.didRecipeDump = true;
+        }
+
+
+
+
     }
 
 }
+
+
+
 
 

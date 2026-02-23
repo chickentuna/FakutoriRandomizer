@@ -13,7 +13,7 @@ namespace FakutoriArchipelago.Archipelago;
 
 public class ArchipelagoClient
 {
-    public const string APVersion = "0.5.0";
+    public const string APVersion = "0.6.2";
     private const string Game = "Fakutori";
 
     public static bool Authenticated;
@@ -68,7 +68,7 @@ public class ArchipelagoClient
                     session.TryConnectAndLogin(
                         Game,
                         ServerData.SlotName,
-                        ItemsHandlingFlags.NoItems,
+                        ItemsHandlingFlags.AllItems,
                         new Version(APVersion),
                         password: ServerData.Password,
                         requestSlotData: ServerData.NeedSlotData
