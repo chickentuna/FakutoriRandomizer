@@ -24,7 +24,7 @@ public class ArchipelagoData
 
     public ArchipelagoData()
     {
-        Uri = "archipelago.gg:";
+        Uri = "localhost:38281";
         SlotName = "chickentuna";
         CheckedLocations = new();
     }

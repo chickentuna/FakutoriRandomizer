@@ -6,6 +6,7 @@ using Archipelago.MultiClient.Net.BounceFeatures.DeathLink;
 using Archipelago.MultiClient.Net.Enums;
 using Archipelago.MultiClient.Net.Helpers;
 using Archipelago.MultiClient.Net.MessageLog.Messages;
+using Archipelago.MultiClient.Net.Models;
 using Archipelago.MultiClient.Net.Packets;
 using FakutoriArchipelago.Utils;
 
@@ -21,7 +22,7 @@ public class ArchipelagoClient
 
     public static ArchipelagoData ServerData = new();
     private DeathLinkHandler DeathLinkHandler;
-    private ArchipelagoSession session;
+    public ArchipelagoSession session;
 
     /// <summary>
     /// call to connect to an Archipelago session. Connection info should already be set up on ServerData
@@ -140,7 +141,7 @@ public class ArchipelagoClient
     /// <param name="helper">item helper which we can grab our item from</param>
     private void OnItemReceived(ReceivedItemsHelper helper)
     {
-        var receivedItem = helper.DequeueItem();
+        ItemInfo receivedItem = helper.DequeueItem();
 
         if (helper.Index <= ServerData.Index) return;
 
@@ -149,6 +150,10 @@ public class ArchipelagoClient
         // TODO reward the item here
         // if items can be received while in an invalid state for actually handling them, they can be placed in a local
         // queue/collection to be handled later
+        
+        ArchipelagoConsole.LogMessage($"Received item: {receivedItem.ItemId}  {receivedItem.ItemName} from {receivedItem.LocationId} {receivedItem.LocationName}");
+        Plugin.PendingItems.Enqueue(receivedItem);
+
     }
 
     /// <summary>

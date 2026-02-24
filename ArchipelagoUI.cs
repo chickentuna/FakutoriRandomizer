@@ -46,7 +46,7 @@ public class ArchipelagoUI : MonoBehaviour
         var text = go.AddComponent<Text>();
         text.font = font;
         text.text = content;
-        text.color = Color.black;
+        text.color = Color.white;
 
         var rect = text.GetComponent<RectTransform>();
         rect.anchorMin = new Vector2(0, 1);
@@ -76,7 +76,6 @@ public class ArchipelagoUI : MonoBehaviour
         text.text = "";
         text.color = Color.black;
         text.alignment = TextAnchor.MiddleLeft;
-        //textGO.AddComponent<CanvasRenderer>();
 
         input.textComponent = text;
 
