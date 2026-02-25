@@ -27,6 +27,7 @@ public class IngredientDump
     public string blockName;
     public int quantity;
     public string ingredientType;
+    public String property;
 }
 
 [System.Serializable]
@@ -66,7 +67,8 @@ public class RecipeDumper
             {
                 blockName = ing.block?.blockName ?? "NO_BLOCK",
                 quantity = ing.quantity,
-                ingredientType = ing.ingredientType.ToString()
+                ingredientType = ing.ingredientType.ToString(),
+                property = ing.property.ToString()
             }).ToArray()
         }).ToArray();
 
