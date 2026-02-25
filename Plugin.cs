@@ -5,6 +5,7 @@ using Fakutori.Grid;
 using FakutoriArchipelago.Archipelago;
 using FakutoriArchipelago.Utils;
 using HarmonyLib;
+using MonoMod.Utils;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -35,12 +36,20 @@ public class Plugin : BaseUnityPlugin
 
     public static bool didRecipeDump = true;
     public static bool didBlockDump = true;
+    public static bool didInitShop = false;
 
     public static ConcurrentQueue<ItemInfo> PendingItems = new();
     public static List<long> UnlockedElements = new();
     public static List<long> BlockIdsThatAreNotLocations = new();
 
-
+    public static void AddToPendingItems(ItemInfo item)
+    {
+        if (UnlockedElements.Contains(item.ItemId))
+        {
+            return;
+        }
+        PendingItems.Enqueue(item);
+    }
 
     public void Awake()
     {
@@ -51,8 +60,7 @@ public class Plugin : BaseUnityPlugin
 
         ArchipelagoConsole.LogMessage($"{ModDisplayInfo} loaded!");
         var harmony = new Harmony("com.chickentuna.archipelago");
-        harmony.PatchAll(typeof(Plugin));
-        harmony.PatchAll(typeof(UnlockBlockPatch));
+        harmony.PatchAll();
 
         UnlockedElements.Add(11);
         UnlockedElements.Add(14);
@@ -63,57 +71,92 @@ public class Plugin : BaseUnityPlugin
         BlockIdsThatAreNotLocations.Add(15);
         BlockIdsThatAreNotLocations.Add(16);
 
+
     }
 
 
 }
 
+[HarmonyPatch(typeof(BlockData), "blockName", MethodType.Getter)]
+class BlockNamePropertyPatch
+{
+    static void Postfix(BlockData __instance, ref string __result)
+    {
+        // You can look at __instance.NameKey if it's a field/property on Block
+        if (__result == "Quartz")
+        {
+            __result = __result + " (" + __instance.color.colorName + ")";
+        }
+    }
+}
+
+[HarmonyPatch(typeof(EditModeMenu))]
+class EditModeMenuPatch
+{
+    [HarmonyPatch("UnlockMachineAtIndex")]
+    [HarmonyPrefix]
+    static bool PreUnlockMachineAtIndex(EditModeMenu __instance, int atIndex)
+    {
+        
+        return false;
+    }
+
+
+}
 
 [HarmonyPatch(typeof(ProgressManager))]
 internal class UnlockBlockPatch
 {
     static BlocksManager blocksManager;
+    static bool AllowOnElementBlockSpawned = false;
+    public static Dictionary<long, Sprite> BlockSprites;
 
     [HarmonyPatch("OnElementBlockSpawned")]
-    [HarmonyPostfix]
-    static void PostOnElementBlockSpawned(ProgressManager __instance, BlockData blockData, Fakutori.Grid.GridCell onCell)
+    [HarmonyPrefix]
+    static bool PreOnElementBlockSpawned(ProgressManager __instance, BlockData blockData, Fakutori.Grid.GridCell onCell)
     {
         if (!ArchipelagoClient.Authenticated)
         {
-            return;
+            return true;
         }
         if (AbstractSingleton<GameplayManager>.Instance.state != GameplayManager.GameplayState.Watch)
         {
-            return;
+            return true;
         }
+
+        if (AllowOnElementBlockSpawned)
+        {
+            return true;
+        }
+
 
         bool isUnlocked = Plugin.UnlockedElements.Contains(blockData.blockId);
         bool uncheckedLocation = !ArchipelagoClient.ServerData.CheckedLocations.Contains(blockData.blockId) && !Plugin.BlockIdsThatAreNotLocations.Contains(blockData.blockId);
-        
+
         if (uncheckedLocation)
         {
             // Use the session instance to complete the location check for this block id.
-            Plugin.ArchipelagoClient.session.Locations.ScoutLocationsAsync(blockData.blockId).ContinueWith(task =>
-            {
-                if (task.IsCompletedSuccessfully)
-                {
-                    var result = task.Result;
-                    if (result.TryGetValue(blockData.blockId, out var itemInfo))
-                    {
-                        Plugin.BepinLogger.LogInfo($"Scouted location {blockData.blockId}, got item {itemInfo.ItemId}");
+            //Plugin.ArchipelagoClient.session.Locations.ScoutLocationsAsync(blockData.blockId).ContinueWith(task =>
+            //{
+            //    if (task.IsCompletedSuccessfully)
+            //    {
+            //        var result = task.Result;
+            //        if (result.TryGetValue(blockData.blockId, out var itemInfo))
+            //        {
+            //            Plugin.BepinLogger.LogInfo($"Scouted location {blockData.blockId}, got item {itemInfo.ItemId}");
 
-                        //AbstractSingleton<Notifications>.Instance.QueueNotification(NotificationType.NewBlock, blockData, null);
-                    }
-                    else
-                    {
-                        Plugin.BepinLogger.LogWarning($"Scouted location {blockData.blockId} but it was not found in the result!");
-                    }
-                }
-                else
-                {
-                    Plugin.BepinLogger.LogError($"Failed to scout location {blockData.blockId}: {task.Exception}");
-                }
-            });
+            //            //AbstractSingleton<Notifications>.Instance.QueueNotification(NotificationType.NewBlock, blockData, null);
+            //        }
+            //        else
+            //        {
+            //            Plugin.BepinLogger.LogWarning($"Scouted location {blockData.blockId} but it was not found in the result!");
+            //        }
+            //    }
+            //    else
+            //    {
+            //        Plugin.BepinLogger.LogError($"Failed to scout location {blockData.blockId}: {task.Exception}");
+            //    }
+            //});
 
             Plugin.ArchipelagoClient.session.Locations.CompleteLocationChecksAsync(blockData.blockId).ContinueWith(task =>
             {
@@ -137,6 +180,7 @@ internal class UnlockBlockPatch
             }
         }
 
+        return false;
     }
 
 
@@ -157,23 +201,73 @@ internal class UnlockBlockPatch
         blocksManager = AbstractSingleton<BlocksManager>.Instance;
 
 
+        //TODO: retrieve progress when joining existing
+        var ElementBlocksField = AccessTools.Field(typeof(BlocksLibrary), "ElementBlocks");
+        var MachineBlocksField = AccessTools.Field(typeof(BlocksLibrary), "MachineBlocks");
+        var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
+        var ElementBlocks = (BlockData[])ElementBlocksField.GetValue(lib);
+        var MachineBlocks = (BlockData[])MachineBlocksField.GetValue(lib);
 
+        var ShowInCompendiumField = AccessTools.Field(typeof(BlockData), "ShowInCompendium");
 
+        BlockSprites = new Dictionary<long, Sprite>();
+        foreach (var blockData in ElementBlocks.Concat(MachineBlocks))
+        {
+            BlockSprites.Add(blockData.blockId, blockData.uiSprite);
+            ShowInCompendiumField.SetValue(blockData, true);
+        }
     }
+
     static void OnGameTick()
     {
-
-        ItemInfo item;
-        if (Plugin.PendingItems.TryDequeue(out item))
+        if (!Plugin.didInitShop && ArchipelagoClient.Authenticated)
         {
-            Plugin.UnlockedElements.Add(item.ItemId);
+            //Populate the shop
+            List<string> shopLocations = new List<string>();
+            shopLocations.Add("Disassembler");
+            shopLocations.Add("Puller");
+            shopLocations.Add("Pusher");
+            shopLocations.Add("Toggle conveyor");
+            shopLocations.Add("Cross conveyor");
 
             var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
-            var blockData = lib.GetBlockDataById((int)item.ItemId);
+            var MachineBlocksField = AccessTools.Field(typeof(BlocksLibrary), "MachineBlocks");
+            var MachineBlocks = (BlockData[])MachineBlocksField.GetValue(lib);
 
-            AbstractSingleton<Notifications>.Instance.QueueNotification(NotificationType.NewBlock, blockData, null);
+            
+            foreach (var blockData in MachineBlocks)
+            {
+                if (shopLocations.Contains(blockData.blockName))
+                {
+                    Plugin.ArchipelagoClient.session.Locations.ScoutLocationsAsync(blockData.blockId).ContinueWith(task =>
+                    {
+                        if (task.IsCompletedSuccessfully)
+                        {
+                            var result = task.Result;
+                            if (result.TryGetValue(blockData.blockId, out var itemInfo))
+                            {
+                                Plugin.BepinLogger.LogInfo($"Scouted location {blockData.blockId}, got item {itemInfo.ItemId}");
+
+                                var replacingBlockData = lib.GetBlockDataById((int)itemInfo.ItemId);
+                                var replacingSprite = BlockSprites[(int)itemInfo.ItemId];
+                                var uiSpriteField = AccessTools.Field(typeof(BlockData), "UISprite");
+                                uiSpriteField.SetValue(blockData, replacingSprite);
+                            }
+                            else
+                            {
+                                Plugin.BepinLogger.LogWarning($"Scouted location {blockData.blockId} but it was not found in the result!");
+                            }
+                        }
+                        else
+                        {
+                            Plugin.BepinLogger.LogError($"Failed to scout location {blockData.blockId}: {task.Exception}");
+                        }
+                    });
+
+                }
+            }
+            Plugin.didInitShop = true;
         }
-
 
         if (!Plugin.didBlockDump)
         {
@@ -204,6 +298,40 @@ internal class UnlockBlockPatch
             RecipeDumper.DumpRecipes(Recipes, path);
 
             Plugin.didRecipeDump = true;
+        }
+
+        if (AbstractSingleton<GameplayManager>.Instance.state != GameplayManager.GameplayState.Watch)
+        {
+            return;
+        }
+
+        ItemInfo item;
+        if (Plugin.PendingItems.TryDequeue(out item))
+        {
+            Plugin.UnlockedElements.Add(item.ItemId);
+
+            var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
+            var blockData = lib.GetBlockDataById((int)item.ItemId);
+            if (BlockSprites.ContainsKey(item.LocationId))
+            {
+                var originalSprite = BlockSprites[(int)item.LocationId];
+                var uiSpriteField = AccessTools.Field(typeof(BlockData), "UISprite");
+                uiSpriteField.SetValue(blockData, originalSprite);
+            }
+            else if (item.LocationId > -2)
+            {
+                Plugin.BepinLogger.LogWarning($"No sprite found for block id {item.LocationId}");
+            }
+
+            
+            AllowOnElementBlockSpawned = true;
+            AbstractSingleton<ProgressManager>.Instance.OnElementBlockSpawned(blockData, null);
+            AllowOnElementBlockSpawned = false;
+
+            if (blockData.category.name == "Machine")
+            {
+                AbstractSingleton<Notifications>.Instance.QueueNotification(NotificationType.NewBlock, blockData, null);
+            }
         }
 
 

@@ -141,18 +141,14 @@ public class ArchipelagoClient
     /// <param name="helper">item helper which we can grab our item from</param>
     private void OnItemReceived(ReceivedItemsHelper helper)
     {
+        
         ItemInfo receivedItem = helper.DequeueItem();
 
         if (helper.Index <= ServerData.Index) return;
-
         ServerData.Index++;
-
-        // TODO reward the item here
-        // if items can be received while in an invalid state for actually handling them, they can be placed in a local
-        // queue/collection to be handled later
         
         ArchipelagoConsole.LogMessage($"Received item: {receivedItem.ItemId}  {receivedItem.ItemName} from {receivedItem.LocationId} {receivedItem.LocationName}");
-        Plugin.PendingItems.Enqueue(receivedItem);
+        Plugin.AddToPendingItems(receivedItem);
 
     }
 
