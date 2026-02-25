@@ -1,6 +1,7 @@
 ﻿using Archipelago.MultiClient.Net.Models;
 using BepInEx;
 using BepInEx.Logging;
+using Fakutori.Dialogue;
 using Fakutori.Grid;
 using FakutoriArchipelago.Archipelago;
 using FakutoriArchipelago.Utils;
@@ -18,6 +19,7 @@ using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.UI;
 using UnityEngine.UIElements;
+using static UnityEngine.UIElements.GenericDropdownMenu;
 
 namespace FakutoriArchipelago;
 
@@ -97,8 +99,56 @@ class EditModeMenuPatch
     [HarmonyPrefix]
     static bool PreUnlockMachineAtIndex(EditModeMenu __instance, int atIndex)
     {
-        
+        //TODO: put the UISprite back to normal once bought
+
+        //TODO: alternatively, I could change what's in menuItems instead of replacing sprites?
+
+        var menuItemsField = AccessTools.Field(typeof(EditModeMenu), "menuItems");
+        var menuItems = (List<SelectMenuItem>)menuItemsField.GetValue(__instance);
+
+        BlockData data = (menuItems[atIndex].tool as UnlockMachineBlockTool).blockData;
+        AbstractSingleton<CurrencyManager>.Instance.SpendCurrencies(data.unlockCost, 0, null);
+        AbstractSingleton<SFXManager>.Instance.PlayUISfx(SFX.Menus.UnlockCurrency, 0f, null);
+        AbstractSingleton<ProgressManager>.Instance.UnlockMachine(data);
+        if (data.tutorialDialogue != null)
+        {
+            AbstractSingleton<DialogueManager>.Instance.UnlockDialogue(data.tutorialDialogue);
+        }
+        UnityEngine.Object.Destroy(menuItems[atIndex].gameObject);
+        menuItems.RemoveAt(atIndex);
+
         return false;
+
+        //TODO: some of this code will have to be moved to the recieve item logic
+        /*
+        SelectMenuItem selectMenuItem = this.AddItem(data.uiSprite, data.blockName, data.moneyValue.ToString(), true, new PlaceMachineBlockTool(data), false, atIndex);
+        this.UpdateItemsVisibility();
+        menuItems[atIndex].ToggleSelected(true, true, false, false);
+        selectMenuItem.PlayAnimation(SelectMenuItem.SelectMenuItemAnimation.Fill);
+        this.ShortcutsContainer.UpdateShortcut(2, true);
+        if (AbstractSingleton<GameplayManager>.Instance.state == GameplayManager.GameplayState.Edit && data.tutorialDialogue != null)
+        {
+            this.ToggleControls(false);
+            AbstractSingleton<GameplayManager>.Instance.SetGameplayState(GameplayManager.GameplayState.Menu);
+            AbstractSingleton<UIManager>.Instance.modalWindow.OpenModal(LocalizationManager.GetTranslation("ui/modal/machineUnlocked", true, 0, true, false, null, null, true), data.blockShortDescription, delegate
+            {
+                AbstractSingleton<GameplayManager>.Instance.SetGameplayState(GameplayManager.GameplayState.Cutscene);
+                AbstractSingleton<BGMManager>.Instance.ShushGameplayBGM(0.5f);
+                AbstractSingleton<UIManager>.Instance.CloseEditModeMenu();
+                AbstractSingleton<UIManager>.Instance.ToggleHUDCurrencies(false);
+                AbstractSingleton<DialogueManager>.Instance.StartTutorialDialogue(data.tutorialDialogue, true, null);
+            }, delegate
+            {
+                this.ToggleUI(false);
+                AbstractSingleton<UIManager>.Instance.OpenCompendiumOnItem(data);
+            }, delegate
+            {
+                AbstractSingleton<GameplayManager>.Instance.SetGameplayState(GameplayManager.GameplayState.Edit);
+                this.ToggleControls(true);
+            }, LocalizationManager.GetTranslation("ui/modal/machineUnlockedTutorial", true, 0, true, false, null, null, true), LocalizationManager.GetTranslation("ui/modal/machineUnlockedCompendium", true, 0, true, false, null, null, true), LocalizationManager.GetTranslation("ui/modal/close", true, 0, true, false, null, null, true), ModalWindow.ModalIllustration.UnlockMachine, false, false, false, HorizontalAlignmentOptions.Center, HorizontalAlignmentOptions.Center, ModalWindow.ModalSize.Small, 0f);
+        }
+        return false;
+        */
     }
 
 
@@ -234,38 +284,46 @@ internal class UnlockBlockPatch
             var MachineBlocksField = AccessTools.Field(typeof(BlocksLibrary), "MachineBlocks");
             var MachineBlocks = (BlockData[])MachineBlocksField.GetValue(lib);
 
-            
+            List<long> ShopLocations = new List<long>();
             foreach (var blockData in MachineBlocks)
             {
                 if (shopLocations.Contains(blockData.blockName))
                 {
-                    Plugin.ArchipelagoClient.session.Locations.ScoutLocationsAsync(blockData.blockId).ContinueWith(task =>
-                    {
-                        if (task.IsCompletedSuccessfully)
-                        {
-                            var result = task.Result;
-                            if (result.TryGetValue(blockData.blockId, out var itemInfo))
-                            {
-                                Plugin.BepinLogger.LogInfo($"Scouted location {blockData.blockId}, got item {itemInfo.ItemId}");
-
-                                var replacingBlockData = lib.GetBlockDataById((int)itemInfo.ItemId);
-                                var replacingSprite = BlockSprites[(int)itemInfo.ItemId];
-                                var uiSpriteField = AccessTools.Field(typeof(BlockData), "UISprite");
-                                uiSpriteField.SetValue(blockData, replacingSprite);
-                            }
-                            else
-                            {
-                                Plugin.BepinLogger.LogWarning($"Scouted location {blockData.blockId} but it was not found in the result!");
-                            }
-                        }
-                        else
-                        {
-                            Plugin.BepinLogger.LogError($"Failed to scout location {blockData.blockId}: {task.Exception}");
-                        }
-                    });
-
+                    ShopLocations.Add(blockData.blockId);
                 }
             }
+
+            //var EditModeMenu = Resources.FindObjectsOfTypeAll<EditModeMenu>()[0];
+            //var menuItemsField = AccessTools.Field(typeof(EditModeMenu), "menuItems");
+            //var menuItems = (List<SelectMenuItem>)menuItemsField.GetValue(EditModeMenu);
+
+
+            Plugin.ArchipelagoClient.session.Locations.ScoutLocationsAsync(ShopLocations.ToArray()).ContinueWith(task =>
+            {
+                if (task.IsCompletedSuccessfully)
+                {
+                    var result = task.Result;
+                    foreach (var pair in result)
+                    {
+                        long id = pair.Key;
+                        ItemInfo itemInfo = pair.Value;
+
+                        var replacingBlockData = lib.GetBlockDataById((int)itemInfo.ItemId);
+                        var replacingSprite = BlockSprites[(int)itemInfo.ItemId];
+                        var uiSpriteField = AccessTools.Field(typeof(BlockData), "UISprite");
+                        var blockData = lib.GetBlockDataById((int)id);
+                        uiSpriteField.SetValue(blockData, replacingSprite);
+                        Plugin.BepinLogger.LogError($"Block {blockData.blockName} now has the sprite of block {replacingBlockData}");
+
+                    }
+                }
+                else
+                {
+                    Plugin.BepinLogger.LogError($"Failed to scout locations");
+                }
+            });
+
+
             Plugin.didInitShop = true;
         }
 
@@ -323,19 +381,20 @@ internal class UnlockBlockPatch
                 Plugin.BepinLogger.LogWarning($"No sprite found for block id {item.LocationId}");
             }
 
-            
-            AllowOnElementBlockSpawned = true;
-            AbstractSingleton<ProgressManager>.Instance.OnElementBlockSpawned(blockData, null);
-            AllowOnElementBlockSpawned = false;
 
             if (blockData.category.name == "Machine")
             {
                 AbstractSingleton<Notifications>.Instance.QueueNotification(NotificationType.NewBlock, blockData, null);
+                AbstractSingleton<ProgressManager>.Instance.UnlockMachine(blockData);
             }
+            else
+            {
+                AllowOnElementBlockSpawned = true;
+                AbstractSingleton<ProgressManager>.Instance.OnElementBlockSpawned(blockData, null);
+                AllowOnElementBlockSpawned = false;
+            } 
+           
         }
-
-
-
 
     }
 
