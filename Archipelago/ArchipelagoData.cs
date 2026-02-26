@@ -45,6 +45,11 @@ public class ArchipelagoData
     public void SetupSession(Dictionary<string, object> roomSlotData, string roomSeed)
     {
         slotData = roomSlotData;
+        Plugin.BepinLogger.LogInfo("Slot Data received:");
+        foreach (var kv in slotData)
+        {
+            Plugin.BepinLogger.LogInfo($"    {kv.Key}: {kv.Value}");
+        }
         seed = roomSeed;
     }
 

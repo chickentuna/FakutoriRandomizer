@@ -6,6 +6,7 @@ using Fakutori.Grid;
 using FakutoriArchipelago.Archipelago;
 using FakutoriArchipelago.Utils;
 using HarmonyLib;
+using I2.Loc;
 using MonoMod.Utils;
 using System;
 using System.Collections.Concurrent;
@@ -19,6 +20,7 @@ using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.UI;
 using UnityEngine.UIElements;
+using static SFX;
 using static UnityEngine.UIElements.GenericDropdownMenu;
 
 namespace FakutoriArchipelago;
@@ -41,16 +43,34 @@ public class Plugin : BaseUnityPlugin
     public static bool didInitShop = false;
 
     public static ConcurrentQueue<ItemInfo> PendingItems = new();
-    public static List<long> UnlockedElements = new();
+    public static List<long> UnlockedItemIds = new();
     public static List<long> BlockIdsThatAreNotLocations = new();
 
     public static void AddToPendingItems(ItemInfo item)
     {
-        if (UnlockedElements.Contains(item.ItemId))
+        if (UnlockedItemIds.Contains(item.ItemId))
         {
             return;
         }
         PendingItems.Enqueue(item);
+    }
+
+    public static void DoCheck(long locationId)
+    {
+        if (ArchipelagoClient.Authenticated)
+        {
+            ArchipelagoClient.session.Locations.CompleteLocationChecksAsync(locationId).ContinueWith(task =>
+            {
+                if (task.IsCompletedSuccessfully)
+                {
+                    ArchipelagoClient.ServerData.CheckedLocations.Add(locationId);
+                }
+                else
+                {
+                    Plugin.BepinLogger.LogError($"Failed to complete location check for {locationId}: {task.Exception}");
+                }
+            });
+        }
     }
 
     public void Awake()
@@ -64,16 +84,16 @@ public class Plugin : BaseUnityPlugin
         var harmony = new Harmony("com.chickentuna.archipelago");
         harmony.PatchAll();
 
-        UnlockedElements.Add(11);
-        UnlockedElements.Add(14);
-        UnlockedElements.Add(15);
-        UnlockedElements.Add(16);
+        UnlockedItemIds.Add(11);
+        UnlockedItemIds.Add(14);
+        UnlockedItemIds.Add(15);
+        UnlockedItemIds.Add(16);
         BlockIdsThatAreNotLocations.Add(11);
         BlockIdsThatAreNotLocations.Add(14);
         BlockIdsThatAreNotLocations.Add(15);
         BlockIdsThatAreNotLocations.Add(16);
 
-
+        //TODO: muliworld stuff, including loading archipelago sprite
     }
 
 
@@ -99,59 +119,33 @@ class EditModeMenuPatch
     [HarmonyPrefix]
     static bool PreUnlockMachineAtIndex(EditModeMenu __instance, int atIndex)
     {
-        //TODO: put the UISprite back to normal once bought
-
-        //TODO: alternatively, I could change what's in menuItems instead of replacing sprites?
-
+        
         var menuItemsField = AccessTools.Field(typeof(EditModeMenu), "menuItems");
         var menuItems = (List<SelectMenuItem>)menuItemsField.GetValue(__instance);
 
         BlockData data = (menuItems[atIndex].tool as UnlockMachineBlockTool).blockData;
         AbstractSingleton<CurrencyManager>.Instance.SpendCurrencies(data.unlockCost, 0, null);
         AbstractSingleton<SFXManager>.Instance.PlayUISfx(SFX.Menus.UnlockCurrency, 0f, null);
-        AbstractSingleton<ProgressManager>.Instance.UnlockMachine(data);
-        if (data.tutorialDialogue != null)
-        {
-            AbstractSingleton<DialogueManager>.Instance.UnlockDialogue(data.tutorialDialogue);
-        }
         UnityEngine.Object.Destroy(menuItems[atIndex].gameObject);
         menuItems.RemoveAt(atIndex);
 
-        return false;
+        var UpdateItemsVisibilityMethod = AccessTools.Method(typeof(EditModeMenu), "UpdateItemsVisibility");
+        UpdateItemsVisibilityMethod.Invoke(__instance, null);
 
-        //TODO: some of this code will have to be moved to the recieve item logic
-        /*
-        SelectMenuItem selectMenuItem = this.AddItem(data.uiSprite, data.blockName, data.moneyValue.ToString(), true, new PlaceMachineBlockTool(data), false, atIndex);
-        this.UpdateItemsVisibility();
-        menuItems[atIndex].ToggleSelected(true, true, false, false);
-        selectMenuItem.PlayAnimation(SelectMenuItem.SelectMenuItemAnimation.Fill);
-        this.ShortcutsContainer.UpdateShortcut(2, true);
-        if (AbstractSingleton<GameplayManager>.Instance.state == GameplayManager.GameplayState.Edit && data.tutorialDialogue != null)
-        {
-            this.ToggleControls(false);
-            AbstractSingleton<GameplayManager>.Instance.SetGameplayState(GameplayManager.GameplayState.Menu);
-            AbstractSingleton<UIManager>.Instance.modalWindow.OpenModal(LocalizationManager.GetTranslation("ui/modal/machineUnlocked", true, 0, true, false, null, null, true), data.blockShortDescription, delegate
-            {
-                AbstractSingleton<GameplayManager>.Instance.SetGameplayState(GameplayManager.GameplayState.Cutscene);
-                AbstractSingleton<BGMManager>.Instance.ShushGameplayBGM(0.5f);
-                AbstractSingleton<UIManager>.Instance.CloseEditModeMenu();
-                AbstractSingleton<UIManager>.Instance.ToggleHUDCurrencies(false);
-                AbstractSingleton<DialogueManager>.Instance.StartTutorialDialogue(data.tutorialDialogue, true, null);
-            }, delegate
-            {
-                this.ToggleUI(false);
-                AbstractSingleton<UIManager>.Instance.OpenCompendiumOnItem(data);
-            }, delegate
-            {
-                AbstractSingleton<GameplayManager>.Instance.SetGameplayState(GameplayManager.GameplayState.Edit);
-                this.ToggleControls(true);
-            }, LocalizationManager.GetTranslation("ui/modal/machineUnlockedTutorial", true, 0, true, false, null, null, true), LocalizationManager.GetTranslation("ui/modal/machineUnlockedCompendium", true, 0, true, false, null, null, true), LocalizationManager.GetTranslation("ui/modal/close", true, 0, true, false, null, null, true), ModalWindow.ModalIllustration.UnlockMachine, false, false, false, HorizontalAlignmentOptions.Center, HorizontalAlignmentOptions.Center, ModalWindow.ModalSize.Small, 0f);
-        }
+        var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
+        var uiSpriteField = AccessTools.Field(typeof(BlockData), "UISprite");
+        
+        //TODO: should i do this for machines only?
+        // Maybe i need to keep shop items in a different datastructure
+        //TODO: I'm pretty sure i can conflict with the other sprite changing logic
+        var originalSprite = UnlockBlockPatch.BlockSprites[data.blockId];
+        uiSpriteField.SetValue(data, originalSprite);
+        
+        // I have just bought a check. 
+        Plugin.DoCheck(data.blockId);        
+
         return false;
-        */
     }
-
-
 }
 
 [HarmonyPatch(typeof(ProgressManager))]
@@ -180,48 +174,16 @@ internal class UnlockBlockPatch
         }
 
 
-        bool isUnlocked = Plugin.UnlockedElements.Contains(blockData.blockId);
+        bool isUnlocked = Plugin.UnlockedItemIds.Contains(blockData.blockId);
         bool uncheckedLocation = !ArchipelagoClient.ServerData.CheckedLocations.Contains(blockData.blockId) && !Plugin.BlockIdsThatAreNotLocations.Contains(blockData.blockId);
 
         if (uncheckedLocation)
         {
-            // Use the session instance to complete the location check for this block id.
-            //Plugin.ArchipelagoClient.session.Locations.ScoutLocationsAsync(blockData.blockId).ContinueWith(task =>
-            //{
-            //    if (task.IsCompletedSuccessfully)
-            //    {
-            //        var result = task.Result;
-            //        if (result.TryGetValue(blockData.blockId, out var itemInfo))
-            //        {
-            //            Plugin.BepinLogger.LogInfo($"Scouted location {blockData.blockId}, got item {itemInfo.ItemId}");
 
-            //            //AbstractSingleton<Notifications>.Instance.QueueNotification(NotificationType.NewBlock, blockData, null);
-            //        }
-            //        else
-            //        {
-            //            Plugin.BepinLogger.LogWarning($"Scouted location {blockData.blockId} but it was not found in the result!");
-            //        }
-            //    }
-            //    else
-            //    {
-            //        Plugin.BepinLogger.LogError($"Failed to scout location {blockData.blockId}: {task.Exception}");
-            //    }
-            //});
-
-            Plugin.ArchipelagoClient.session.Locations.CompleteLocationChecksAsync(blockData.blockId).ContinueWith(task =>
-            {
-                if (task.IsCompletedSuccessfully)
-                {
-                    ArchipelagoClient.ServerData.CheckedLocations.Add(blockData.blockId);
-                }
-                else
-                {
-                    Plugin.BepinLogger.LogError($"Failed to complete location check for {blockData.blockId}: {task.Exception}");
-                }
-            });
+            Plugin.DoCheck(blockData.blockId);
         }
 
-        if (!Plugin.UnlockedElements.Contains(blockData.blockId))
+        if (!Plugin.UnlockedItemIds.Contains(blockData.blockId))
         {
             List<Block> AllBlocksAt = AbstractSingleton<GridManager>.Instance.GetBlocksAt<Block>(onCell.position);
             foreach (Block block in AllBlocksAt)
@@ -250,8 +212,6 @@ internal class UnlockBlockPatch
         AbstractSingleton<TimeManager>.Instance.OnTick.AddListener(ui.OnTick);
         blocksManager = AbstractSingleton<BlocksManager>.Instance;
 
-
-        //TODO: retrieve progress when joining existing
         var ElementBlocksField = AccessTools.Field(typeof(BlocksLibrary), "ElementBlocks");
         var MachineBlocksField = AccessTools.Field(typeof(BlocksLibrary), "MachineBlocks");
         var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
@@ -293,10 +253,6 @@ internal class UnlockBlockPatch
                 }
             }
 
-            //var EditModeMenu = Resources.FindObjectsOfTypeAll<EditModeMenu>()[0];
-            //var menuItemsField = AccessTools.Field(typeof(EditModeMenu), "menuItems");
-            //var menuItems = (List<SelectMenuItem>)menuItemsField.GetValue(EditModeMenu);
-
 
             Plugin.ArchipelagoClient.session.Locations.ScoutLocationsAsync(ShopLocations.ToArray()).ContinueWith(task =>
             {
@@ -308,12 +264,22 @@ internal class UnlockBlockPatch
                         long id = pair.Key;
                         ItemInfo itemInfo = pair.Value;
 
-                        var replacingBlockData = lib.GetBlockDataById((int)itemInfo.ItemId);
-                        var replacingSprite = BlockSprites[(int)itemInfo.ItemId];
-                        var uiSpriteField = AccessTools.Field(typeof(BlockData), "UISprite");
-                        var blockData = lib.GetBlockDataById((int)id);
-                        uiSpriteField.SetValue(blockData, replacingSprite);
-                        Plugin.BepinLogger.LogError($"Block {blockData.blockName} now has the sprite of block {replacingBlockData}");
+                        
+
+                        if (itemInfo.Player.Name == ArchipelagoClient.ServerData.SlotName
+                            && itemInfo.ItemGame == "Fakutori")
+                        {
+                            var replacingBlockData = lib.GetBlockDataById((int)itemInfo.ItemId);
+                            var replacingSprite = BlockSprites[(int)itemInfo.ItemId];
+                            var uiSpriteField = AccessTools.Field(typeof(BlockData), "UISprite");
+                            var blockData = lib.GetBlockDataById((int)id);
+                            uiSpriteField.SetValue(blockData, replacingSprite);
+                            Plugin.BepinLogger.LogInfo($"Block {blockData.blockName} now has the sprite of block {replacingBlockData}");
+                        } else
+                        {
+                            // Is for another world!
+                            //TODO: an archipelago sprite
+                        }
 
                     }
                 }
@@ -358,27 +324,38 @@ internal class UnlockBlockPatch
             Plugin.didRecipeDump = true;
         }
 
-        if (AbstractSingleton<GameplayManager>.Instance.state != GameplayManager.GameplayState.Watch)
+        if (AbstractSingleton<GameplayManager>.Instance.state != GameplayManager.GameplayState.Watch
+            && AbstractSingleton<GameplayManager>.Instance.state != GameplayManager.GameplayState.Edit)
         {
             return;
         }
 
-        ItemInfo item;
-        if (Plugin.PendingItems.TryDequeue(out item))
+        ItemInfo itemInfo;
+        if (Plugin.PendingItems.TryDequeue(out itemInfo))
         {
-            Plugin.UnlockedElements.Add(item.ItemId);
+            Plugin.UnlockedItemIds.Add(itemInfo.ItemId);
 
             var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
-            var blockData = lib.GetBlockDataById((int)item.ItemId);
-            if (BlockSprites.ContainsKey(item.LocationId))
+            
+            var blockData = lib.GetBlockDataById((int)itemInfo.ItemId);
+
+            bool fromOwnGame = itemInfo.ItemGame == "Fakutori" && itemInfo.Player.Name == ArchipelagoClient.ServerData.SlotName;
+            if (fromOwnGame)
             {
-                var originalSprite = BlockSprites[(int)item.LocationId];
-                var uiSpriteField = AccessTools.Field(typeof(BlockData), "UISprite");
-                uiSpriteField.SetValue(blockData, originalSprite);
+                if (BlockSprites.ContainsKey(itemInfo.LocationId))
+                {
+                    var originalSprite = BlockSprites[(int)itemInfo.LocationId];
+                    var uiSpriteField = AccessTools.Field(typeof(BlockData), "UISprite");
+                    uiSpriteField.SetValue(blockData, originalSprite);
+                }
+                else if (itemInfo.LocationId > -2)
+                {
+                    Plugin.BepinLogger.LogWarning($"No sprite found for block id {itemInfo.LocationId}");
+                }
             }
-            else if (item.LocationId > -2)
+            else
             {
-                Plugin.BepinLogger.LogWarning($"No sprite found for block id {item.LocationId}");
+                // Archipelago sprite
             }
 
 
@@ -386,13 +363,33 @@ internal class UnlockBlockPatch
             {
                 AbstractSingleton<Notifications>.Instance.QueueNotification(NotificationType.NewBlock, blockData, null);
                 AbstractSingleton<ProgressManager>.Instance.UnlockMachine(blockData);
+
+                Plugin.BepinLogger.LogInfo($"Unlocked machine block {blockData.blockName}");
+
+                var menu = Resources.FindObjectsOfTypeAll<EditModeMenu>()[0];
+                var menuItemsField = AccessTools.Field(typeof(EditModeMenu), "menuItems");
+                var menuItems = (List<SelectMenuItem>)menuItemsField.GetValue(menu);
+                var AddItemMethod = AccessTools.Method(typeof(EditModeMenu), "AddItem", new Type[] { typeof(Sprite), typeof(string), typeof(string), typeof(bool), typeof(PlaceMachineBlockTool), typeof(bool), typeof(int) });
+                var UpdateItemsVisibilityMethod = AccessTools.Method(typeof(EditModeMenu), "UpdateItemsVisibility");
+
+                int atIndex = menuItems.Count;
+                SelectMenuItem selectMenuItem =
+                    AddItemMethod.Invoke(menu, new object[] { blockData.uiSprite, blockData.blockName, blockData.moneyValue.ToString(), true, new PlaceMachineBlockTool(blockData), false, atIndex }) as SelectMenuItem;
+                
+                UpdateItemsVisibilityMethod.Invoke(menu, null);
+
+                //TODO: what does this do, does the menu have to be open for this?
+                //menuItems[atIndex].ToggleSelected(true, true, false, false);
+                //selectMenuItem.PlayAnimation(SelectMenuItem.SelectMenuItemAnimation.Fill);
+                // This seems useless
+                //menu.ShortcutsContainer.UpdateShortcut(2, true);
             }
             else
             {
                 AllowOnElementBlockSpawned = true;
                 AbstractSingleton<ProgressManager>.Instance.OnElementBlockSpawned(blockData, null);
                 AllowOnElementBlockSpawned = false;
-            } 
+            }
            
         }
 
