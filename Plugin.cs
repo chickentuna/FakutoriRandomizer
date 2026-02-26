@@ -17,6 +17,7 @@ using System.Linq;
 using System.Reflection;
 using System.Threading;
 using UnityEngine;
+using UnityEngine.Android;
 using UnityEngine.Events;
 using UnityEngine.UI;
 using UnityEngine.UIElements;
@@ -71,6 +72,13 @@ public class Plugin : BaseUnityPlugin
                 }
             });
         }
+        else
+        {
+            //TODO: if were offline, save checks to send instead of simulating recieveing the item
+            var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
+            var blockData = lib.GetBlockDataById((int)locationId);
+            UnlockBlockPatch.ApplyUnlock(blockData);
+        }
     }
 
     public void Awake()
@@ -115,11 +123,88 @@ class BlockNamePropertyPatch
 [HarmonyPatch(typeof(EditModeMenu))]
 class EditModeMenuPatch
 {
+
+    [HarmonyPatch("AddItem")]
+    [HarmonyPrefix]
+    static void PreAddItem(EditModeMenu __instance, Sprite uiSprite, string name, string price, bool showShadow, SelectionTool tool, bool isLocked = false, int atIndex = -1)
+    {
+        Plugin.BepinLogger.LogInfo($"AddItem called with {name}, {price}, {tool}, {isLocked}, {atIndex}");
+    }
+
+    [HarmonyPatch("FillItems")]
+    [HarmonyPostfix]
+    static void PostFillItems(EditModeMenu __instance)
+    {
+        Plugin.BepinLogger.LogInfo($"PostFillItems");
+
+        // Game has just filled the menu with the standard icons.
+        var menuItemsField = AccessTools.Field(typeof(EditModeMenu), "menuItems");
+        var menuItems = (List<SelectMenuItem>)menuItemsField.GetValue(__instance);
+
+        int menuIdx = 3;
+        foreach (BlockData blockData in AbstractSingleton<BlocksManager>.Instance.blocksLibrary.machineBlocks)
+        {
+            SelectMenuItem menuItem = menuItems[menuIdx];
+            menuIdx++;
+
+            // What is this replaced by?
+            ItemInfo itemInfo;
+            if (!UnlockBlockPatch.ShopLocations.TryGetValue(blockData.blockId, out itemInfo))
+            {
+                continue;
+            }
+
+            if (itemInfo.Player.Name == ArchipelagoClient.ServerData.SlotName)
+            {
+                menuItem.GetComponentInChildren<SpriteRenderer>().sprite = UnlockBlockPatch.BlockSprites[blockData.blockId];
+                Plugin.BepinLogger.LogInfo($"Block {blockData.blockName} in menu item {menuIdx} now has the sprite of block {blockData}");
+            }
+            else
+            {
+                //TODO: archipelago logo
+            }
+        }
+            // If I have unlocked machine X, but have not yet checked location X, then the shop will need a duplicate.
+            //TODO: oh dear.
+
+            // what happens if i just stick an element in the shop?
+            // testing that here:
+            //AddItem(Sprite uiSprite, string name, string price, bool showShadow, SelectionTool tool, bool isLocked = false, int atIndex = -1)
+            var AddItemMethod = AccessTools.Method(typeof(EditModeMenu), "AddItem",
+                new Type[] {
+                    typeof(Sprite),      // uiSprite
+                    typeof(string),      // name
+                    typeof(string),      // price
+                    typeof(bool),        // showShadow
+                    typeof(SelectionTool), // tool (base class of UnlockMachineBlockTool)
+                    typeof(bool),        // isLocked
+                    typeof(int)          // atIndex
+                }
+            );
+
+        var blockData13 = AbstractSingleton<BlocksManager>.Instance.blocksLibrary.GetBlockDataById(13);
+        Plugin.BepinLogger.LogInfo($"Calling AddItem from hook ({AddItemMethod})");
+            AddItemMethod.Invoke(__instance, new object[] {
+                UnlockBlockPatch.BlockSprites[13],
+                "BLUE FLAME",
+                blockData13.unlockCost.ToString(),
+                true,
+                new UnlockMachineBlockTool(blockData13) as SelectionTool,
+                true,
+                -1
+            });
+        // NOTE: this works GREAT. All I need now is to remove the tools unless they are unlocked, then for each tool location reinsert
+        // a menu item
+
+    }
+
     [HarmonyPatch("UnlockMachineAtIndex")]
     [HarmonyPrefix]
     static bool PreUnlockMachineAtIndex(EditModeMenu __instance, int atIndex)
     {
-        
+
+        //TODO: update the local shop datastructure and force close the menu?
+
         var menuItemsField = AccessTools.Field(typeof(EditModeMenu), "menuItems");
         var menuItems = (List<SelectMenuItem>)menuItemsField.GetValue(__instance);
 
@@ -129,20 +214,16 @@ class EditModeMenuPatch
         UnityEngine.Object.Destroy(menuItems[atIndex].gameObject);
         menuItems.RemoveAt(atIndex);
 
-        var UpdateItemsVisibilityMethod = AccessTools.Method(typeof(EditModeMenu), "UpdateItemsVisibility");
-        UpdateItemsVisibilityMethod.Invoke(__instance, null);
-
-        var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
-        var uiSpriteField = AccessTools.Field(typeof(BlockData), "UISprite");
-        
         //TODO: should i do this for machines only?
         // Maybe i need to keep shop items in a different datastructure
         //TODO: I'm pretty sure i can conflict with the other sprite changing logic
+        var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
+        var uiSpriteField = AccessTools.Field(typeof(BlockData), "UISprite");
         var originalSprite = UnlockBlockPatch.BlockSprites[data.blockId];
         uiSpriteField.SetValue(data, originalSprite);
-        
+
         // I have just bought a check. 
-        Plugin.DoCheck(data.blockId);        
+        Plugin.DoCheck(data.blockId);
 
         return false;
     }
@@ -154,6 +235,7 @@ internal class UnlockBlockPatch
     static BlocksManager blocksManager;
     static bool AllowOnElementBlockSpawned = false;
     public static Dictionary<long, Sprite> BlockSprites;
+    public static Dictionary<long, ItemInfo> ShopLocations = new();
 
     [HarmonyPatch("OnElementBlockSpawned")]
     [HarmonyPrefix]
@@ -228,33 +310,59 @@ internal class UnlockBlockPatch
         }
     }
 
+    public static void ApplyUnlock(BlockData blockData)
+    {
+
+        // Remove from shop if its still a shop location
+
+        if (ShopLocations.Values.ToList().Find(itemInfo => itemInfo.ItemId == blockData.blockId) != null)
+        {
+            //TODO: remove it from my list of things that should be in shop (gets recreated when menu opens)
+
+        }
+
+        if (blockData.category.name == "Machine")
+        {
+            AbstractSingleton<Notifications>.Instance.QueueNotification(NotificationType.NewBlock, blockData, null);
+            AbstractSingleton<ProgressManager>.Instance.UnlockMachine(blockData);
+
+            Plugin.BepinLogger.LogInfo($"Unlocked machine block {blockData.blockName}");
+
+
+            // Note: menu is recreated on the fly using FillItems whenever it opens so this is a no go
+        }
+        else
+        {
+            AllowOnElementBlockSpawned = true;
+            AbstractSingleton<ProgressManager>.Instance.OnElementBlockSpawned(blockData, null);
+            AllowOnElementBlockSpawned = false;
+        }
+    }
+
     static void OnGameTick()
     {
         if (!Plugin.didInitShop && ArchipelagoClient.Authenticated)
         {
             //Populate the shop
-            List<string> shopLocations = new List<string>();
-            shopLocations.Add("Disassembler");
-            shopLocations.Add("Puller");
-            shopLocations.Add("Pusher");
-            shopLocations.Add("Toggle conveyor");
-            shopLocations.Add("Cross conveyor");
+            List<string> shopLocationNames = new List<string>();
+            shopLocationNames.Add("Disassembler");
+            shopLocationNames.Add("Puller");
+            shopLocationNames.Add("Pusher");
+            shopLocationNames.Add("Toggle conveyor");
+            shopLocationNames.Add("Cross conveyor");
 
             var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
             var MachineBlocksField = AccessTools.Field(typeof(BlocksLibrary), "MachineBlocks");
             var MachineBlocks = (BlockData[])MachineBlocksField.GetValue(lib);
 
-            List<long> ShopLocations = new List<long>();
-            foreach (var blockData in MachineBlocks)
-            {
-                if (shopLocations.Contains(blockData.blockName))
-                {
-                    ShopLocations.Add(blockData.blockId);
-                }
-            }
+            var shopLocationIds = new List<long>();
 
+            shopLocationIds = shopLocationNames.Select(name =>
+            Plugin.ArchipelagoClient.session.Locations.GetLocationIdFromName("Fakutori", name))
+            .Where(id => id != -1)
+            .ToList();
 
-            Plugin.ArchipelagoClient.session.Locations.ScoutLocationsAsync(ShopLocations.ToArray()).ContinueWith(task =>
+            Plugin.ArchipelagoClient.session.Locations.ScoutLocationsAsync(shopLocationIds.ToArray()).ContinueWith(task =>
             {
                 if (task.IsCompletedSuccessfully)
                 {
@@ -264,10 +372,12 @@ internal class UnlockBlockPatch
                         long id = pair.Key;
                         ItemInfo itemInfo = pair.Value;
 
-                        
+                        ShopLocations.Add(id, itemInfo);
 
-                        if (itemInfo.Player.Name == ArchipelagoClient.ServerData.SlotName
-                            && itemInfo.ItemGame == "Fakutori")
+                        // Old system was to change uiSprite, but instead we can directly change the game objects sprite
+                        //TODO: I should instead create a smaller little sprite in the corner to indicate origin
+                        //TODO: that
+                        if (itemInfo.Player.Name == ArchipelagoClient.ServerData.SlotName)
                         {
                             var replacingBlockData = lib.GetBlockDataById((int)itemInfo.ItemId);
                             var replacingSprite = BlockSprites[(int)itemInfo.ItemId];
@@ -275,7 +385,8 @@ internal class UnlockBlockPatch
                             var blockData = lib.GetBlockDataById((int)id);
                             uiSpriteField.SetValue(blockData, replacingSprite);
                             Plugin.BepinLogger.LogInfo($"Block {blockData.blockName} now has the sprite of block {replacingBlockData}");
-                        } else
+                        }
+                        else
                         {
                             // Is for another world!
                             //TODO: an archipelago sprite
@@ -336,10 +447,10 @@ internal class UnlockBlockPatch
             Plugin.UnlockedItemIds.Add(itemInfo.ItemId);
 
             var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
-            
+
             var blockData = lib.GetBlockDataById((int)itemInfo.ItemId);
 
-            bool fromOwnGame = itemInfo.ItemGame == "Fakutori" && itemInfo.Player.Name == ArchipelagoClient.ServerData.SlotName;
+            bool fromOwnGame = itemInfo.Player.Name == ArchipelagoClient.ServerData.SlotName;
             if (fromOwnGame)
             {
                 if (BlockSprites.ContainsKey(itemInfo.LocationId))
@@ -359,38 +470,8 @@ internal class UnlockBlockPatch
             }
 
 
-            if (blockData.category.name == "Machine")
-            {
-                AbstractSingleton<Notifications>.Instance.QueueNotification(NotificationType.NewBlock, blockData, null);
-                AbstractSingleton<ProgressManager>.Instance.UnlockMachine(blockData);
+            ApplyUnlock(blockData);
 
-                Plugin.BepinLogger.LogInfo($"Unlocked machine block {blockData.blockName}");
-
-                var menu = Resources.FindObjectsOfTypeAll<EditModeMenu>()[0];
-                var menuItemsField = AccessTools.Field(typeof(EditModeMenu), "menuItems");
-                var menuItems = (List<SelectMenuItem>)menuItemsField.GetValue(menu);
-                var AddItemMethod = AccessTools.Method(typeof(EditModeMenu), "AddItem", new Type[] { typeof(Sprite), typeof(string), typeof(string), typeof(bool), typeof(PlaceMachineBlockTool), typeof(bool), typeof(int) });
-                var UpdateItemsVisibilityMethod = AccessTools.Method(typeof(EditModeMenu), "UpdateItemsVisibility");
-
-                int atIndex = menuItems.Count;
-                SelectMenuItem selectMenuItem =
-                    AddItemMethod.Invoke(menu, new object[] { blockData.uiSprite, blockData.blockName, blockData.moneyValue.ToString(), true, new PlaceMachineBlockTool(blockData), false, atIndex }) as SelectMenuItem;
-                
-                UpdateItemsVisibilityMethod.Invoke(menu, null);
-
-                //TODO: what does this do, does the menu have to be open for this?
-                //menuItems[atIndex].ToggleSelected(true, true, false, false);
-                //selectMenuItem.PlayAnimation(SelectMenuItem.SelectMenuItemAnimation.Fill);
-                // This seems useless
-                //menu.ShortcutsContainer.UpdateShortcut(2, true);
-            }
-            else
-            {
-                AllowOnElementBlockSpawned = true;
-                AbstractSingleton<ProgressManager>.Instance.OnElementBlockSpawned(blockData, null);
-                AllowOnElementBlockSpawned = false;
-            }
-           
         }
 
     }
