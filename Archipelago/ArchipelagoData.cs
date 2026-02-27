@@ -10,8 +10,6 @@ public class ArchipelagoData
     public string Password;
     public int Index;
 
-    public List<long> CheckedLocations;
-
     /// <summary>
     /// seed for this archipelago data. Can be used when loading a file to verify the session the player is trying to
     /// load is valid to the room it's connecting to.
@@ -26,7 +24,6 @@ public class ArchipelagoData
     {
         Uri = "localhost:38281";
         SlotName = "chickentuna";
-        CheckedLocations = new();
     }
 
     public ArchipelagoData(string uri, string slotName, string password)
@@ -34,7 +31,6 @@ public class ArchipelagoData
         Uri = uri;
         SlotName = slotName;
         Password = password;
-        CheckedLocations = new();
     }
 
     /// <summary>

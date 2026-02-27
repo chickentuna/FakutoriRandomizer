@@ -58,13 +58,16 @@ public class Plugin : BaseUnityPlugin
 
     public static void DoCheck(long locationId)
     {
+        
+        Plugin.BepinLogger.LogInfo($"Doing check for location {locationId}");
         if (ArchipelagoClient.Authenticated)
         {
             ArchipelagoClient.session.Locations.CompleteLocationChecksAsync(locationId).ContinueWith(task =>
             {
                 if (task.IsCompletedSuccessfully)
                 {
-                    ArchipelagoClient.ServerData.CheckedLocations.Add(locationId);
+                    // should i keep like a local cache or something?
+                    Plugin.BepinLogger.LogInfo($"Success");
                 }
                 else
                 {
@@ -74,6 +77,7 @@ public class Plugin : BaseUnityPlugin
         }
         else
         {
+            Plugin.BepinLogger.LogWarning($"Not authenticated :(");
             //TODO: if were offline, save checks to send instead of simulating recieveing the item
             var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
             var blockData = lib.GetBlockDataById((int)locationId);
@@ -92,10 +96,13 @@ public class Plugin : BaseUnityPlugin
         var harmony = new Harmony("com.chickentuna.archipelago");
         harmony.PatchAll();
 
+        // I don't understand why I receive the three default machines from server but not the basic elements
+        // TODO: figure it out
         UnlockedItemIds.Add(11);
         UnlockedItemIds.Add(14);
         UnlockedItemIds.Add(15);
         UnlockedItemIds.Add(16);
+
         BlockIdsThatAreNotLocations.Add(11);
         BlockIdsThatAreNotLocations.Add(14);
         BlockIdsThatAreNotLocations.Add(15);
@@ -126,52 +133,89 @@ class EditModeMenuPatch
 
     [HarmonyPatch("AddItem")]
     [HarmonyPrefix]
-    static void PreAddItem(EditModeMenu __instance, Sprite uiSprite, string name, string price, bool showShadow, SelectionTool tool, bool isLocked = false, int atIndex = -1)
+    static bool PreAddItem(EditModeMenu __instance, Sprite uiSprite, string name, string price, bool showShadow, SelectionTool tool, bool isLocked = false, int atIndex = -1)
     {
-        Plugin.BepinLogger.LogInfo($"AddItem called with {name}, {price}, {tool}, {isLocked}, {atIndex}");
+        return true;
     }
 
     [HarmonyPatch("FillItems")]
     [HarmonyPostfix]
     static void PostFillItems(EditModeMenu __instance)
     {
+        var currentLayerField = AccessTools.Field(typeof(EditModeMenu), "currentLayer");
+        var currentLayer = (EditModeLayer)currentLayerField.GetValue(__instance);
+        if (currentLayer != EditModeLayer.Machines)
+        {
+            return;
+        }
         Plugin.BepinLogger.LogInfo($"PostFillItems");
+
 
         // Game has just filled the menu with the standard icons.
         var menuItemsField = AccessTools.Field(typeof(EditModeMenu), "menuItems");
         var menuItems = (List<SelectMenuItem>)menuItemsField.GetValue(__instance);
-
+        var lib = AbstractSingleton<BlocksManager>.Instance.blocksLibrary;
         int menuIdx = 3;
-        foreach (BlockData blockData in AbstractSingleton<BlocksManager>.Instance.blocksLibrary.machineBlocks)
+
+        List<BlockData> machinesToKeepBecauseUnlocked = lib.machineBlocks.Where(blockData =>
+            Plugin.UnlockedItemIds.Contains(blockData.blockId)
+        ).ToList();
+
+        List<ItemInfo> toAddToShop = new List<ItemInfo>();
+        int indexAtWhichToClear = 3 + 4; // because the generators aren't checks
+
+
+        foreach (BlockData originalMachineBlock in lib.machineBlocks)
         {
             SelectMenuItem menuItem = menuItems[menuIdx];
             menuIdx++;
+            long shoplocationId = originalMachineBlock.blockId;
+
 
             // What is this replaced by?
             ItemInfo itemInfo;
-            if (!UnlockBlockPatch.ShopLocations.TryGetValue(blockData.blockId, out itemInfo))
+            if (!UnlockBlockPatch.ShopLocations.TryGetValue(shoplocationId, out itemInfo))
             {
                 continue;
             }
 
-            if (itemInfo.Player.Name == ArchipelagoClient.ServerData.SlotName)
+            // If location hasn't been checked, will need to go back into shop
+            if (!ArchipelagoClient.session.Locations.AllLocationsChecked.Contains(shoplocationId))
             {
-                menuItem.GetComponentInChildren<SpriteRenderer>().sprite = UnlockBlockPatch.BlockSprites[blockData.blockId];
-                Plugin.BepinLogger.LogInfo($"Block {blockData.blockName} in menu item {menuIdx} now has the sprite of block {blockData}");
+                if (itemInfo.Player.Name == ArchipelagoClient.ServerData.SlotName)
+                {
+                    // Skip the item is already owned
+                    if (Plugin.UnlockedItemIds.Contains(originalMachineBlock.blockId))
+                    {
+                        continue;
+                    }
+                    BlockData blockForSale = lib.GetBlockDataById((int)itemInfo.ItemId);
+                    var unlockCostField = AccessTools.Field(typeof(BlockData), "UnlockCost");
+                    unlockCostField.SetValue(blockForSale, UnlockBlockPatch.BlockUnlockCosts[originalMachineBlock.blockId] / 10);
+                    toAddToShop.Add(itemInfo);
+                }
+                else
+                {
+                    //TODO: add archipelago logo to shop
+                }
             }
-            else
+
+        }
+
+        // Remove everything from the shop
+        if (indexAtWhichToClear != -1)
+        {
+            for (int i = menuItems.Count - 1; i >= indexAtWhichToClear; i--)
             {
-                //TODO: archipelago logo
+                UnityEngine.Object.Destroy(menuItems[i].gameObject);
+                menuItems.RemoveAt(i);
             }
         }
-            // If I have unlocked machine X, but have not yet checked location X, then the shop will need a duplicate.
-            //TODO: oh dear.
 
-            // what happens if i just stick an element in the shop?
-            // testing that here:
-            //AddItem(Sprite uiSprite, string name, string price, bool showShadow, SelectionTool tool, bool isLocked = false, int atIndex = -1)
-            var AddItemMethod = AccessTools.Method(typeof(EditModeMenu), "AddItem",
-                new Type[] {
+
+        //AddItem(Sprite uiSprite, string name, string price, bool showShadow, SelectionTool tool, bool isLocked = false, int atIndex = -1)
+        var AddItemMethod = AccessTools.Method(typeof(EditModeMenu), "AddItem",
+            new Type[] {
                     typeof(Sprite),      // uiSprite
                     typeof(string),      // name
                     typeof(string),      // price
@@ -179,32 +223,51 @@ class EditModeMenuPatch
                     typeof(SelectionTool), // tool (base class of UnlockMachineBlockTool)
                     typeof(bool),        // isLocked
                     typeof(int)          // atIndex
-                }
-            );
+            }
+        );
 
-        var blockData13 = AbstractSingleton<BlocksManager>.Instance.blocksLibrary.GetBlockDataById(13);
-        Plugin.BepinLogger.LogInfo($"Calling AddItem from hook ({AddItemMethod})");
+        // Put unlocked machines back into the menu
+        foreach (BlockData blockData in machinesToKeepBecauseUnlocked)
+        {
             AddItemMethod.Invoke(__instance, new object[] {
-                UnlockBlockPatch.BlockSprites[13],
-                "BLUE FLAME",
-                blockData13.unlockCost.ToString(),
+                UnlockBlockPatch.BlockSprites[blockData.blockId],
+                blockData.blockName,
+                blockData.moneyValue.ToString(),
                 true,
-                new UnlockMachineBlockTool(blockData13) as SelectionTool,
+                new PlaceMachineBlockTool(blockData) as SelectionTool,
+                false,
+                -1
+            });
+        }
+
+        // Put buyable things into the menu
+        foreach (ItemInfo itemInfo in toAddToShop)
+        {
+
+            BlockData blockForSale = lib.GetBlockDataById((int)itemInfo.ItemId);
+
+            SelectionTool selectionTool = new UnlockMachineBlockTool(blockForSale);
+
+            UnlockBlockPatch.ShopLocationIdFromBlockData.TryAdd(blockForSale, itemInfo.LocationId);
+
+            AddItemMethod.Invoke(__instance, new object[] {
+                UnlockBlockPatch.BlockSprites[blockForSale.blockId],
+                blockForSale.blockName,
+                blockForSale.unlockCost.ToString(),
+                true,
+                selectionTool,
                 true,
                 -1
             });
-        // NOTE: this works GREAT. All I need now is to remove the tools unless they are unlocked, then for each tool location reinsert
-        // a menu item
 
+
+        }
     }
 
     [HarmonyPatch("UnlockMachineAtIndex")]
     [HarmonyPrefix]
     static bool PreUnlockMachineAtIndex(EditModeMenu __instance, int atIndex)
     {
-
-        //TODO: update the local shop datastructure and force close the menu?
-
         var menuItemsField = AccessTools.Field(typeof(EditModeMenu), "menuItems");
         var menuItems = (List<SelectMenuItem>)menuItemsField.GetValue(__instance);
 
@@ -214,20 +277,33 @@ class EditModeMenuPatch
         UnityEngine.Object.Destroy(menuItems[atIndex].gameObject);
         menuItems.RemoveAt(atIndex);
 
-        //TODO: should i do this for machines only?
-        // Maybe i need to keep shop items in a different datastructure
-        //TODO: I'm pretty sure i can conflict with the other sprite changing logic
-        var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
-        var uiSpriteField = AccessTools.Field(typeof(BlockData), "UISprite");
-        var originalSprite = UnlockBlockPatch.BlockSprites[data.blockId];
-        uiSpriteField.SetValue(data, originalSprite);
+        //force close menu
+        var GameplayManager = AbstractSingleton<GameplayManager>.Instance;
+        // GameplayManager.ToggleEdit(false); // <- buggy
 
-        // I have just bought a check. 
-        Plugin.DoCheck(data.blockId);
+        // I have just bought a check.
+        if (UnlockBlockPatch.ShopLocationIdFromBlockData.TryGetValue(data, out long shopLocationId))
+        {
+            Plugin.DoCheck(shopLocationId);
+        }
+        else
+        { 
+            Plugin.BepinLogger.LogWarning($"Problem! bought a {data.blockName} from the shop, but there was no associated shop location ID");
+            Plugin.BepinLogger.LogWarning("ShopLocationIds:");
+            foreach(var kv in UnlockBlockPatch.ShopLocationIdFromBlockData)
+            {
+                Plugin.BepinLogger.LogWarning($" - {kv.Key.blockName}: {kv.Value}");
+            }
+        }
+
+
 
         return false;
     }
 }
+
+
+
 
 [HarmonyPatch(typeof(ProgressManager))]
 internal class UnlockBlockPatch
@@ -235,7 +311,9 @@ internal class UnlockBlockPatch
     static BlocksManager blocksManager;
     static bool AllowOnElementBlockSpawned = false;
     public static Dictionary<long, Sprite> BlockSprites;
+    public static Dictionary<long, int> BlockUnlockCosts;
     public static Dictionary<long, ItemInfo> ShopLocations = new();
+    public static Dictionary<BlockData, long> ShopLocationIdFromBlockData = new Dictionary<BlockData, long>();
 
     [HarmonyPatch("OnElementBlockSpawned")]
     [HarmonyPrefix]
@@ -257,11 +335,11 @@ internal class UnlockBlockPatch
 
 
         bool isUnlocked = Plugin.UnlockedItemIds.Contains(blockData.blockId);
-        bool uncheckedLocation = !ArchipelagoClient.ServerData.CheckedLocations.Contains(blockData.blockId) && !Plugin.BlockIdsThatAreNotLocations.Contains(blockData.blockId);
+        bool uncheckedLocation = !Plugin.BlockIdsThatAreNotLocations.Contains(blockData.blockId) && !ArchipelagoClient.session.Locations.AllLocationsChecked.Contains(blockData.blockId);
+
 
         if (uncheckedLocation)
         {
-
             Plugin.DoCheck(blockData.blockId);
         }
 
@@ -302,11 +380,22 @@ internal class UnlockBlockPatch
 
         var ShowInCompendiumField = AccessTools.Field(typeof(BlockData), "ShowInCompendium");
 
+        int colorlessQuartzId = 47;
+
         BlockSprites = new Dictionary<long, Sprite>();
         foreach (var blockData in ElementBlocks.Concat(MachineBlocks))
         {
             BlockSprites.Add(blockData.blockId, blockData.uiSprite);
-            ShowInCompendiumField.SetValue(blockData, true);
+            if (blockData.blockId != colorlessQuartzId)
+            {
+                ShowInCompendiumField.SetValue(blockData, true);
+            }
+        }
+
+        BlockUnlockCosts = new Dictionary<long, int>();
+        foreach (var blockData in MachineBlocks)
+        {
+            BlockUnlockCosts.Add(blockData.blockId, blockData.unlockCost);
         }
     }
 
@@ -358,11 +447,11 @@ internal class UnlockBlockPatch
             var shopLocationIds = new List<long>();
 
             shopLocationIds = shopLocationNames.Select(name =>
-            Plugin.ArchipelagoClient.session.Locations.GetLocationIdFromName("Fakutori", name))
+            ArchipelagoClient.session.Locations.GetLocationIdFromName("Fakutori", name))
             .Where(id => id != -1)
             .ToList();
 
-            Plugin.ArchipelagoClient.session.Locations.ScoutLocationsAsync(shopLocationIds.ToArray()).ContinueWith(task =>
+            ArchipelagoClient.session.Locations.ScoutLocationsAsync(shopLocationIds.ToArray()).ContinueWith(task =>
             {
                 if (task.IsCompletedSuccessfully)
                 {
@@ -374,17 +463,14 @@ internal class UnlockBlockPatch
 
                         ShopLocations.Add(id, itemInfo);
 
-                        // Old system was to change uiSprite, but instead we can directly change the game objects sprite
-                        //TODO: I should instead create a smaller little sprite in the corner to indicate origin
-                        //TODO: that
                         if (itemInfo.Player.Name == ArchipelagoClient.ServerData.SlotName)
                         {
-                            var replacingBlockData = lib.GetBlockDataById((int)itemInfo.ItemId);
-                            var replacingSprite = BlockSprites[(int)itemInfo.ItemId];
-                            var uiSpriteField = AccessTools.Field(typeof(BlockData), "UISprite");
-                            var blockData = lib.GetBlockDataById((int)id);
-                            uiSpriteField.SetValue(blockData, replacingSprite);
-                            Plugin.BepinLogger.LogInfo($"Block {blockData.blockName} now has the sprite of block {replacingBlockData}");
+                            //var replacingBlockData = lib.GetBlockDataById((int)itemInfo.ItemId);
+                            //var replacingSprite = BlockSprites[(int)itemInfo.ItemId];
+                            //var uiSpriteField = AccessTools.Field(typeof(BlockData), "UISprite");
+                            //var blockData = lib.GetBlockDataById((int)id);
+                            //uiSpriteField.SetValue(blockData, replacingSprite);
+                            //Plugin.BepinLogger.LogInfo($"Block {blockData.blockName} now has the sprite of block {replacingBlockData}");
                         }
                         else
                         {
@@ -445,6 +531,11 @@ internal class UnlockBlockPatch
         if (Plugin.PendingItems.TryDequeue(out itemInfo))
         {
             Plugin.UnlockedItemIds.Add(itemInfo.ItemId);
+            Plugin.BepinLogger.LogInfo($"all unlocked items: ");
+            foreach (var id in Plugin.UnlockedItemIds)
+            {
+                Plugin.BepinLogger.LogInfo($" - {id}");
+            }
 
             var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
 
@@ -455,9 +546,9 @@ internal class UnlockBlockPatch
             {
                 if (BlockSprites.ContainsKey(itemInfo.LocationId))
                 {
-                    var originalSprite = BlockSprites[(int)itemInfo.LocationId];
-                    var uiSpriteField = AccessTools.Field(typeof(BlockData), "UISprite");
-                    uiSpriteField.SetValue(blockData, originalSprite);
+                    //var originalSprite = BlockSprites[(int)itemInfo.LocationId];
+                    //var uiSpriteField = AccessTools.Field(typeof(BlockData), "UISprite");
+                    //uiSpriteField.SetValue(blockData, originalSprite);
                 }
                 else if (itemInfo.LocationId > -2)
                 {

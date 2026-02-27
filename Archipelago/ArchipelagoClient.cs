@@ -22,7 +22,7 @@ public class ArchipelagoClient
 
     public static ArchipelagoData ServerData = new();
     private DeathLinkHandler DeathLinkHandler;
-    public ArchipelagoSession session;
+    public static ArchipelagoSession session;
 
     /// <summary>
     /// call to connect to an Archipelago session. Connection info should already be set up on ServerData
@@ -98,7 +98,6 @@ public class ArchipelagoClient
             Authenticated = true;
 
             DeathLinkHandler = new(session.CreateDeathLinkService(), ServerData.SlotName);
-            session.Locations.CompleteLocationChecksAsync(ServerData.CheckedLocations.ToArray());
             outText = $"Successfully connected to {ServerData.Uri} as {ServerData.SlotName}!";
 
             ArchipelagoConsole.LogMessage(outText);
