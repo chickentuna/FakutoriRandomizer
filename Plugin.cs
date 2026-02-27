@@ -23,6 +23,7 @@ using UnityEngine.UI;
 using UnityEngine.UIElements;
 using static SFX;
 using static UnityEngine.UIElements.GenericDropdownMenu;
+using static UnityEngine.UIElements.UIR.BestFitAllocator;
 
 namespace FakutoriArchipelago;
 
@@ -42,6 +43,8 @@ public class Plugin : BaseUnityPlugin
     public static bool didRecipeDump = true;
     public static bool didBlockDump = true;
     public static bool didInitShop = false;
+    public static bool didInitRecipes = false;
+
 
     public static ConcurrentQueue<ItemInfo> PendingItems = new();
     public static List<long> UnlockedItemIds = new();
@@ -58,7 +61,7 @@ public class Plugin : BaseUnityPlugin
 
     public static void DoCheck(long locationId)
     {
-        
+
         Plugin.BepinLogger.LogInfo($"Doing check for location {locationId}");
         if (ArchipelagoClient.Authenticated)
         {
@@ -78,10 +81,6 @@ public class Plugin : BaseUnityPlugin
         else
         {
             Plugin.BepinLogger.LogWarning($"Not authenticated :(");
-            //TODO: if were offline, save checks to send instead of simulating recieveing the item
-            var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
-            var blockData = lib.GetBlockDataById((int)locationId);
-            UnlockBlockPatch.ApplyUnlock(blockData);
         }
     }
 
@@ -111,12 +110,25 @@ public class Plugin : BaseUnityPlugin
         //TODO: muliworld stuff, including loading archipelago sprite
     }
 
-
 }
 
-[HarmonyPatch(typeof(BlockData), "blockName", MethodType.Getter)]
+[HarmonyPatch(typeof(BlockData))]
 class BlockNamePropertyPatch
 {
+    [HarmonyPatch("blockName", MethodType.Getter)]
+    static bool Prefix(BlockData __instance, ref string __result)
+    {
+        var NameKeyField = AccessTools.Field(typeof(BlockData), "NameKey");
+        var NameKey = (string)NameKeyField.GetValue(__instance);
+        if (NameKey.StartsWith("custom_"))
+        {
+            __result = NameKey.Substring("custom_".Length);
+            return false;
+        }
+        return true;
+    }
+
+    [HarmonyPatch("blockName", MethodType.Getter)]
     static void Postfix(BlockData __instance, ref string __result)
     {
         // You can look at __instance.NameKey if it's a field/property on Block
@@ -174,7 +186,7 @@ class EditModeMenuPatch
 
             // What is this replaced by?
             ItemInfo itemInfo;
-            if (!UnlockBlockPatch.ShopLocations.TryGetValue(shoplocationId, out itemInfo))
+            if (!ProgressManagerPatch.ShopLocations.TryGetValue(shoplocationId, out itemInfo))
             {
                 continue;
             }
@@ -189,9 +201,10 @@ class EditModeMenuPatch
                     {
                         continue;
                     }
-                    BlockData blockForSale = lib.GetBlockDataById((int)itemInfo.ItemId);
+
+                    BlockData blockForSale = ProgressManagerPatch.BaseElementBlocks[itemInfo.ItemId];
                     var unlockCostField = AccessTools.Field(typeof(BlockData), "UnlockCost");
-                    unlockCostField.SetValue(blockForSale, UnlockBlockPatch.BlockUnlockCosts[originalMachineBlock.blockId] / 10);
+                    unlockCostField.SetValue(blockForSale, ProgressManagerPatch.BlockUnlockCosts[originalMachineBlock.blockId] / 10);
                     toAddToShop.Add(itemInfo);
                 }
                 else
@@ -201,6 +214,7 @@ class EditModeMenuPatch
             }
 
         }
+
 
         // Remove everything from the shop
         if (indexAtWhichToClear != -1)
@@ -230,7 +244,7 @@ class EditModeMenuPatch
         foreach (BlockData blockData in machinesToKeepBecauseUnlocked)
         {
             AddItemMethod.Invoke(__instance, new object[] {
-                UnlockBlockPatch.BlockSprites[blockData.blockId],
+                ProgressManagerPatch.BlockSprites[blockData.blockId],
                 blockData.blockName,
                 blockData.moneyValue.ToString(),
                 true,
@@ -243,15 +257,14 @@ class EditModeMenuPatch
         // Put buyable things into the menu
         foreach (ItemInfo itemInfo in toAddToShop)
         {
-
-            BlockData blockForSale = lib.GetBlockDataById((int)itemInfo.ItemId);
+            BlockData blockForSale = ProgressManagerPatch.BaseElementBlocks[itemInfo.ItemId];
 
             SelectionTool selectionTool = new UnlockMachineBlockTool(blockForSale);
 
-            UnlockBlockPatch.ShopLocationIdFromBlockData.TryAdd(blockForSale, itemInfo.LocationId);
+            ProgressManagerPatch.ShopLocationIdFromBlockData.TryAdd(blockForSale, itemInfo.LocationId);
 
             AddItemMethod.Invoke(__instance, new object[] {
-                UnlockBlockPatch.BlockSprites[blockForSale.blockId],
+                ProgressManagerPatch.BlockSprites[blockForSale.blockId],
                 blockForSale.blockName,
                 blockForSale.unlockCost.ToString(),
                 true,
@@ -278,19 +291,19 @@ class EditModeMenuPatch
         menuItems.RemoveAt(atIndex);
 
         //force close menu
-        var GameplayManager = AbstractSingleton<GameplayManager>.Instance;
+        // var GameplayManager = AbstractSingleton<GameplayManager>.Instance;
         // GameplayManager.ToggleEdit(false); // <- buggy
 
         // I have just bought a check.
-        if (UnlockBlockPatch.ShopLocationIdFromBlockData.TryGetValue(data, out long shopLocationId))
+        if (ProgressManagerPatch.ShopLocationIdFromBlockData.TryGetValue(data, out long shopLocationId))
         {
             Plugin.DoCheck(shopLocationId);
         }
         else
-        { 
+        {
             Plugin.BepinLogger.LogWarning($"Problem! bought a {data.blockName} from the shop, but there was no associated shop location ID");
             Plugin.BepinLogger.LogWarning("ShopLocationIds:");
-            foreach(var kv in UnlockBlockPatch.ShopLocationIdFromBlockData)
+            foreach (var kv in ProgressManagerPatch.ShopLocationIdFromBlockData)
             {
                 Plugin.BepinLogger.LogWarning($" - {kv.Key.blockName}: {kv.Value}");
             }
@@ -302,11 +315,131 @@ class EditModeMenuPatch
     }
 }
 
+[HarmonyPatch(typeof(BlocksLibrary))]
+internal class BlocksLibraryPatch
+{
+    public static Dictionary<int, BlockData> CustomBlockData = new();
 
 
+    static void FilterRecipe(ref ValueTuple<int, Recipe> __result, int blockCount)
+    {
+        if (__result.Item2 != null)
+        {
+            int blockId = __result.Item2.product.blockId;
+            if (!Plugin.UnlockedItemIds.Contains(blockId))
+            {
+                __result = new ValueTuple<int, Recipe>(blockCount, null);
+            }
+        }
+    }
+
+    [HarmonyPatch("GetBlockDataById")]
+    [HarmonyPrefix]
+    public static bool PreGetBlockDataById(BlocksLibrary __instance, int id, ref BlockData __result)
+    {
+        if (CustomBlockData.TryGetValue(id, out var blockData))
+        {
+            __result = blockData;
+            return false;
+        }
+
+        if (ProgressManagerPatch.BaseElementBlocks.TryGetValue(id, out blockData))
+        {
+            __result = blockData;
+            return false;
+        }
+        return true;
+    }
+
+    [HarmonyPatch("GetRecipeFromIngredients")]
+    [HarmonyPostfix]
+    public static void PostGetRecipeFromIngredients(BlocksLibrary __instance, List<ElementBlock> blocks, SortedDictionary<int, RecipeTree> recipes, ref ValueTuple<int, Recipe> __result)
+    {
+        FilterRecipe(ref __result, blocks.Count);
+    }
+
+    [HarmonyPatch("GetCombineRecipeFromIngredients")]
+    [HarmonyPostfix]
+    public static void PostGetCombineRecipeFromIngredients(BlocksLibrary __instance, List<ElementBlock> blocks, ref ValueTuple<int, Recipe> __result)
+    {
+        FilterRecipe(ref __result, blocks.Count);
+    }
+
+    [HarmonyPatch("fallProduct", MethodType.Getter)]
+    [HarmonyPostfix]
+    public static void PostGetFallProduct(BlockData __instance, ref BlockData __result)
+    {
+        __result = Plugin.UnlockedItemIds.Contains(__result.blockId) ? __result : null;
+    }
+
+    [HarmonyPatch("riseProduct", MethodType.Getter)]
+    [HarmonyPostfix]
+    public static void PostGetRiseProduct(BlockData __instance, ref BlockData __result)
+    {
+        __result = Plugin.UnlockedItemIds.Contains(__result.blockId) ? __result : null;
+    }
+}
+
+/*
+[HarmonyPatch(typeof(RecipeIngredient))]
+class RecipeIngredientPatch
+{
+    [HarmonyPatch("IsIngredientAvailable")]
+    [HarmonyPrefix]
+    public static bool PreIsIngredientAvailable(RecipeIngredient __instance, ref bool __result)
+    {
+        var IngredientTypeField = AccessTools.Field(typeof(RecipeIngredient), "IngredientType");
+        var ColorField = AccessTools.Field(typeof(RecipeIngredient), "Color");
+        var IngredientType = (RecipeIngredient.RecipeIngredientType)IngredientTypeField.GetValue(__instance);
+        var Color = (BlockColor)ColorField.GetValue(__instance);
+
+
+        switch (IngredientType)
+        {
+            case RecipeIngredient.RecipeIngredientType.Block:
+                Plugin.BepinLogger.LogInfo($"Checking if block {__instance.block.blockName} is unlocked");
+                __result = AbstractSingleton<ProgressManager>.Instance.GetProgress(__instance.block).isUnlocked;
+                return false;
+            case RecipeIngredient.RecipeIngredientType.Property:
+                Plugin.BepinLogger.LogInfo($"Checking if property {__instance.property} is unlocked");
+                __result = AbstractSingleton<ProgressManager>.Instance.UnlockedBlocksCount((BlockData x) => x.HasProperty(__instance.property)) >= __instance.quantity;
+                return false;
+            case RecipeIngredient.RecipeIngredientType.Color:
+                Plugin.BepinLogger.LogInfo($"Checking if color {Color.colorName} is unlocked");
+                __result = AbstractSingleton<ProgressManager>.Instance.UnlockedBlocksCount((BlockData x) => x.color == Color) >= __instance.quantity;
+                return false;
+            case RecipeIngredient.RecipeIngredientType.Any:
+                Plugin.BepinLogger.LogInfo($"Checking if any block is unlocked");
+                __result = true;
+                return false;
+        }
+        Plugin.BepinLogger.LogWarning($"Unknown ingredient type {IngredientType}");
+        __result = false;
+        return false;
+    }
+}
+*/
+
+/*
+[HarmonyPatch(typeof(Compendium))]
+class CompendiumPatch
+{
+    [HarmonyPatch("FillBlockList")]
+    [HarmonyPostfix]
+    public static void FillBlockList(Compendium __instance)
+    {
+        Plugin.BepinLogger.LogInfo($"Post FillBlockList");
+        var ElementBlocksField = AccessTools.Field(typeof(BlocksLibrary), "ElementBlocks");
+        var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
+        var ElementBlocks = (BlockData[])ElementBlocksField.GetValue(lib);
+        Plugin.BepinLogger.LogInfo($"Element blocks count in lib: {ElementBlocks.Length}");
+    }
+
+}
+*/
 
 [HarmonyPatch(typeof(ProgressManager))]
-internal class UnlockBlockPatch
+internal class ProgressManagerPatch
 {
     static BlocksManager blocksManager;
     static bool AllowOnElementBlockSpawned = false;
@@ -314,6 +447,49 @@ internal class UnlockBlockPatch
     public static Dictionary<long, int> BlockUnlockCosts;
     public static Dictionary<long, ItemInfo> ShopLocations = new();
     public static Dictionary<BlockData, long> ShopLocationIdFromBlockData = new Dictionary<BlockData, long>();
+
+    public static Dictionary<long, BlockData> BaseElementBlocks = new();
+
+    /*
+    [HarmonyPatch("ResetAllProgress")]
+    [HarmonyPrefix]
+    static bool PreResetAllProgress(ProgressManager __instance)
+    {
+        if (!ArchipelagoClient.Authenticated)
+        {
+            return true;
+        }
+        var blocksProgressField = AccessTools.Field(typeof(ProgressManager), "blocksProgress");
+        var spawnLegendariesField = AccessTools.Field(typeof(ProgressManager), "spawnedLegendaries");
+        var challengesCompletedProperty = AccessTools.Property(typeof(ProgressManager), "challengesCompleted");
+        var ResetAllBlockChallengesMethod = AccessTools.Method(typeof(ProgressManager), "ResetAllBlockChallenges");
+        var unlockedMachinesField = AccessTools.Field(typeof(ProgressManager), "unlockedMachines");
+        var activeFlagsField = AccessTools.Field(typeof(ProgressManager), "activeFlags");
+
+        var this_blocksProgress = (SortedDictionary<int, BlockProgress>)blocksProgressField.GetValue(__instance);
+        var this_spawnedLegendaries = (HashSet<LegendaryBlocks>)spawnLegendariesField.GetValue(__instance);
+        var this_ResetAllBlockChallenges = (Action)ResetAllBlockChallengesMethod.CreateDelegate(typeof(Action), __instance);
+        var this_unlockedMachines = (HashSet<int>)unlockedMachinesField.GetValue(__instance);
+        var this_activeFlags = (HashSet<ProgressFlag>)activeFlagsField.GetValue(__instance);
+
+
+        this_blocksProgress.Clear();
+        this_spawnedLegendaries.Clear();
+        challengesCompletedProperty.SetValue(__instance, 0);
+        this_ResetAllBlockChallenges();
+        foreach (BlockData blockData in BaseElementBlocks.Values.Concat(AbstractSingleton<BlocksManager>.Instance.blocksLibrary.machineBlocks))
+        {
+            BlockProgress blockProgress = new BlockProgress();
+            blockProgress.isUnlocked = blockData.unlockedByDefault;
+            blockProgress.isNewlyUnlocked = blockData.unlockedByDefault;
+            this_blocksProgress.Add(blockData.blockId, blockProgress);
+        }
+        this_unlockedMachines.Clear();
+        this_activeFlags.Clear();
+
+        return false;
+    }
+    */
 
     [HarmonyPatch("OnElementBlockSpawned")]
     [HarmonyPrefix]
@@ -333,9 +509,8 @@ internal class UnlockBlockPatch
             return true;
         }
 
-
-        bool isUnlocked = Plugin.UnlockedItemIds.Contains(blockData.blockId);
-        bool uncheckedLocation = !Plugin.BlockIdsThatAreNotLocations.Contains(blockData.blockId) && !ArchipelagoClient.session.Locations.AllLocationsChecked.Contains(blockData.blockId);
+        bool uncheckedLocation = !Plugin.BlockIdsThatAreNotLocations.Contains(blockData.blockId)
+            && !ArchipelagoClient.session.Locations.AllLocationsChecked.Contains(blockData.blockId);
 
 
         if (uncheckedLocation)
@@ -343,16 +518,7 @@ internal class UnlockBlockPatch
             Plugin.DoCheck(blockData.blockId);
         }
 
-        if (!Plugin.UnlockedItemIds.Contains(blockData.blockId))
-        {
-            List<Block> AllBlocksAt = AbstractSingleton<GridManager>.Instance.GetBlocksAt<Block>(onCell.position);
-            foreach (Block block in AllBlocksAt)
-            {
-                blocksManager.RemoveBlock(block);
-            }
-        }
-
-        return false;
+        return true;
     }
 
 
@@ -399,37 +565,93 @@ internal class UnlockBlockPatch
         }
     }
 
+    public static void PrintElementCount()
+    {
+        var ElementBlocksField = AccessTools.Field(typeof(BlocksLibrary), "ElementBlocks");
+        var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
+        var ElementBlocks = (BlockData[])ElementBlocksField.GetValue(lib);
+        Plugin.BepinLogger.LogInfo($"Element blocks count in lib: {ElementBlocks.Length}");
+    }
+
     public static void ApplyUnlock(BlockData blockData)
     {
-
-        // Remove from shop if its still a shop location
-
-        if (ShopLocations.Values.ToList().Find(itemInfo => itemInfo.ItemId == blockData.blockId) != null)
+        if (blockData.category.name != "Machine")
         {
-            //TODO: remove it from my list of things that should be in shop (gets recreated when menu opens)
+            var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
+            var ElementBlocksField = AccessTools.Field(typeof(BlocksLibrary), "ElementBlocks");
+            var ElementBlocks = (BlockData[])ElementBlocksField.GetValue(lib);
 
-        }
+            if (ElementBlocks.ToList().Find(block => block.blockId == blockData.blockId))
+            {
+                // It's already unlocked...
+                if (!Plugin.UnlockedItemIds.Contains(blockData.blockId))
+                {
+                    Plugin.UnlockedItemIds.Add(blockData.blockId);
+                    Plugin.BepinLogger.LogWarning($"impossible data mismatch");
+                }
+                return;
+            }
 
-        if (blockData.category.name == "Machine")
-        {
+            // Add item to compendium and blocksProgress
+            var modifiedElementBlocks = ElementBlocks.Concat(new BlockData[] { blockData }).ToArray();
+            ElementBlocksField.SetValue(lib, modifiedElementBlocks);
+
+            ProgressManager progressManager = AbstractSingleton<ProgressManager>.Instance;
+            var blocksProgressField = AccessTools.Field(typeof(ProgressManager), "blocksProgress");
+            var blocksProgress = (SortedDictionary<int, BlockProgress>)blocksProgressField.GetValue(progressManager);
+            var blockProgress = new BlockProgress();
+            blockProgress.isUnlocked = false;
+            blockProgress.isNewlyUnlocked = false;
+            blocksProgress.Add(blockData.blockId, blockProgress);
+
+            string actualName = LocalizationManager.GetTranslation("blockName/" + blockData.nameKey, true, 0, true, false, null, null, true);
+
+            // Insert a special custom block data that will be picked up by the notification when doing getblockdatabyid
+            int count = BlocksLibraryPatch.CustomBlockData.Count();
+            int customId = -(count + 1);
+            var customBlockData = ScriptableObject.Instantiate(blockData);
+
+            var BlockIdField = AccessTools.Field(typeof(BlockData), "BlockId");
+            BlockIdField.SetValue(customBlockData, customId);
+
+            // Today, only uiSprite, icon, and blockName are used. We have a hook on blockName so we put our desired name here.
+            string unlockText = $"Recipe(s) for {actualName}";
+            var NameKeyField = AccessTools.Field(typeof(BlockData), "NameKey");
+            NameKeyField.SetValue(customBlockData, $"custom_{unlockText}");
+
+            BlocksLibraryPatch.CustomBlockData[blockData.blockId] = customBlockData;
+
+            // In this line, blockData is used only to access id
             AbstractSingleton<Notifications>.Instance.QueueNotification(NotificationType.NewBlock, blockData, null);
-            AbstractSingleton<ProgressManager>.Instance.UnlockMachine(blockData);
-
-            Plugin.BepinLogger.LogInfo($"Unlocked machine block {blockData.blockName}");
-
-
-            // Note: menu is recreated on the fly using FillItems whenever it opens so this is a no go
+            Plugin.BepinLogger.LogInfo($"Unlocked element block {blockData.blockName}");
         }
         else
         {
-            AllowOnElementBlockSpawned = true;
-            AbstractSingleton<ProgressManager>.Instance.OnElementBlockSpawned(blockData, null);
-            AllowOnElementBlockSpawned = false;
+            AbstractSingleton<Notifications>.Instance.QueueNotification(NotificationType.NewBlock, blockData, null);
+            AbstractSingleton<ProgressManager>.Instance.UnlockMachine(blockData);
+            Plugin.BepinLogger.LogInfo($"Unlocked machine block {blockData.blockName}");
         }
+
+        return;
     }
+
+
 
     static void OnGameTick()
     {
+        if (!Plugin.didInitRecipes && ArchipelagoClient.Authenticated)
+        {
+            // Remove all unlocked blocks from game
+            BlocksLibrary lib = AbstractSingleton<BlocksManager>.Instance.blocksLibrary;
+            var ElementBlocksField = AccessTools.Field(typeof(BlocksLibrary), "ElementBlocks");
+            var ElementBlocks = (BlockData[])ElementBlocksField.GetValue(lib);
+            BaseElementBlocks = ElementBlocks.ToDictionary(v => (long)v.blockId, v => v);
+            var modifiedElementsBlocks = ElementBlocks.Where(blockData => Plugin.UnlockedItemIds.Contains(blockData.blockId)).ToArray();
+            ElementBlocksField.SetValue(lib, modifiedElementsBlocks);
+
+            Plugin.didInitRecipes = true;
+        }
+
         if (!Plugin.didInitShop && ArchipelagoClient.Authenticated)
         {
             //Populate the shop
@@ -462,22 +684,6 @@ internal class UnlockBlockPatch
                         ItemInfo itemInfo = pair.Value;
 
                         ShopLocations.Add(id, itemInfo);
-
-                        if (itemInfo.Player.Name == ArchipelagoClient.ServerData.SlotName)
-                        {
-                            //var replacingBlockData = lib.GetBlockDataById((int)itemInfo.ItemId);
-                            //var replacingSprite = BlockSprites[(int)itemInfo.ItemId];
-                            //var uiSpriteField = AccessTools.Field(typeof(BlockData), "UISprite");
-                            //var blockData = lib.GetBlockDataById((int)id);
-                            //uiSpriteField.SetValue(blockData, replacingSprite);
-                            //Plugin.BepinLogger.LogInfo($"Block {blockData.blockName} now has the sprite of block {replacingBlockData}");
-                        }
-                        else
-                        {
-                            // Is for another world!
-                            //TODO: an archipelago sprite
-                        }
-
                     }
                 }
                 else
@@ -492,32 +698,13 @@ internal class UnlockBlockPatch
 
         if (!Plugin.didBlockDump)
         {
-            var ElementBlocksField = AccessTools.Field(typeof(BlocksLibrary), "ElementBlocks");
-            var MachineBlocksField = AccessTools.Field(typeof(BlocksLibrary), "MachineBlocks");
-            var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
-            var ElementBlocks = (BlockData[])ElementBlocksField.GetValue(lib);
-            var MachineBlocks = (BlockData[])MachineBlocksField.GetValue(lib);
-
-            string path = Path.Combine(Paths.PluginPath, "blocks_dump.txt");
-            BlockDumper.DumpBlocks(ElementBlocks.Concat(MachineBlocks).ToArray(), path);
+            BlockDumper.Do();
             Plugin.didBlockDump = true;
         }
 
         if (!Plugin.didRecipeDump)
         {
-            string path = Path.Combine(Paths.PluginPath, "recipes_dump.txt");
-
-            var RecipesField = AccessTools.Field(typeof(BlocksLibrary), "Recipes");
-            var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
-            var Recipes = (Recipe[])RecipesField.GetValue(lib);
-
-            if (Recipes == null)
-            {
-                Plugin.BepinLogger.LogInfo("Recipes is null!");
-                return;
-            }
-            RecipeDumper.DumpRecipes(Recipes, path);
-
+            RecipeDumper.Do();
             Plugin.didRecipeDump = true;
         }
 
@@ -531,37 +718,18 @@ internal class UnlockBlockPatch
         if (Plugin.PendingItems.TryDequeue(out itemInfo))
         {
             Plugin.UnlockedItemIds.Add(itemInfo.ItemId);
-            Plugin.BepinLogger.LogInfo($"all unlocked items: ");
-            foreach (var id in Plugin.UnlockedItemIds)
+
+            if (BaseElementBlocks.TryGetValue(itemInfo.ItemId, out BlockData blockData))
             {
-                Plugin.BepinLogger.LogInfo($" - {id}");
-            }
-
-            var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
-
-            var blockData = lib.GetBlockDataById((int)itemInfo.ItemId);
-
-            bool fromOwnGame = itemInfo.Player.Name == ArchipelagoClient.ServerData.SlotName;
-            if (fromOwnGame)
-            {
-                if (BlockSprites.ContainsKey(itemInfo.LocationId))
-                {
-                    //var originalSprite = BlockSprites[(int)itemInfo.LocationId];
-                    //var uiSpriteField = AccessTools.Field(typeof(BlockData), "UISprite");
-                    //uiSpriteField.SetValue(blockData, originalSprite);
-                }
-                else if (itemInfo.LocationId > -2)
-                {
-                    Plugin.BepinLogger.LogWarning($"No sprite found for block id {itemInfo.LocationId}");
-                }
+                ApplyUnlock(blockData);
             }
             else
             {
-                // Archipelago sprite
+                //It must be a machine block.
+                var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
+                var machineBlockData = lib.GetBlockDataById((int)itemInfo.ItemId);
+                ApplyUnlock(machineBlockData);
             }
-
-
-            ApplyUnlock(blockData);
 
         }
 

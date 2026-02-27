@@ -47,7 +47,18 @@ public class RecipeDump
 }
 
 public class RecipeDumper
-    { 
+{
+
+    public static void Do()
+    {
+        string path = Path.Combine(Paths.PluginPath, "recipes_dump.txt");
+
+        var RecipesField = AccessTools.Field(typeof(BlocksLibrary), "Recipes");
+        var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
+        var Recipes = (Recipe[])RecipesField.GetValue(lib);
+        RecipeDumper.DumpRecipes(Recipes, path);
+    }
+
     public static void DumpRecipes(Recipe[] recipes, string filePath)
     {
 

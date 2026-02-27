@@ -36,6 +36,18 @@ public class BlockDump
 
 public class BlockDumper
     { 
+    public static void Do()
+    {
+        var ElementBlocksField = AccessTools.Field(typeof(BlocksLibrary), "ElementBlocks");
+        var MachineBlocksField = AccessTools.Field(typeof(BlocksLibrary), "MachineBlocks");
+        var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
+        var ElementBlocks = (BlockData[])ElementBlocksField.GetValue(lib);
+        var MachineBlocks = (BlockData[])MachineBlocksField.GetValue(lib);
+
+        string path = Path.Combine(Paths.PluginPath, "blocks_dump.txt");
+        DumpBlocks(ElementBlocks.Concat(MachineBlocks).ToArray(), path);
+    }
+
     public static void DumpBlocks(BlockData[] blocks, string filePath)
     {
 
