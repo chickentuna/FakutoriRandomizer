@@ -95,8 +95,7 @@ public class Plugin : BaseUnityPlugin
         var harmony = new Harmony("com.chickentuna.archipelago");
         harmony.PatchAll();
 
-        // I don't understand why I receive the three default machines from server but not the basic elements
-        // TODO: figure it out
+        // Soon even generators will possibly be checks
         UnlockedItemIds.Add(11);
         UnlockedItemIds.Add(14);
         UnlockedItemIds.Add(15);
@@ -178,7 +177,7 @@ class ElementBlockPatch
 class NotificationsPatch
 {
     
-    public static bool AllowQueueNotification = true;
+    public static bool AllowQueueNotification = false;
 
     [HarmonyPatch("QueueNotification")]
     [HarmonyPrefix]
@@ -469,7 +468,23 @@ internal class BlocksLibraryPatch
 [HarmonyPatch(typeof(Notification))]
 class NotificationPatch
 {
-    
+    /*
+    [Error  : Unity Log] KeyNotFoundException: The given key '26' was not present in
+ the dictionary.
+Stack trace:
+System.Collections.Generic.Dictionary`2[TKey,TValue].get_Item (TKey key) (at <c9
+d3ffd4b98649ee9989e1908eaca019>:0)
+FakutoriArchipelago.NotificationPatch.PreOpenCompendium (Notification __instance
+) (at /home/jpn/git/poulton/FakutoriArchipelago/Plugin.cs:481)
+(wrapper dynamic-method) Notification.DMD<Notification::OpenCompendium>(Notifica
+tion)
+UnityEngine.Events.InvokableCall.Invoke () (at <561971c91c08471b9e995b582c6b3074
+>:0)
+UnityEngine.Events.UnityEvent.Invoke () (at <561971c91c08471b9e995b582c6b3074>:0
+)
+    */
+
+
     [HarmonyPatch("OpenCompendium")]
     [HarmonyPrefix]
     static bool PreOpenCompendium(Notification __instance)
@@ -478,9 +493,12 @@ class NotificationPatch
         var blockData = (BlockData)blockDataField.GetValue(__instance);
 
         
-        BlockData actualBlockData = BlocksLibraryPatch.CustomBlockDataOriginal[blockData.blockId];
-        AbstractSingleton<UIManager>.Instance.OpenCompendiumOnItem(actualBlockData);
-        return false;
+        if (BlocksLibraryPatch.CustomBlockDataOriginal.TryGetValue(blockData.blockId, out var actualBlockData))
+        {
+            AbstractSingleton<UIManager>.Instance.OpenCompendiumOnItem(actualBlockData);
+            return false;
+        }
+        return true;
     } 
 
     [HarmonyPatch("Init")]
@@ -576,20 +594,22 @@ class LocalizationManagerPatch
     }
 }
 
-[HarmonyPatch(typeof(StarShowerManager))]
-class StarshowerManagerPatch
+[HarmonyPatch(typeof(BlocksManager))]
+class BlocksManagerPatch
 {
-    [HarmonyPatch("OnLegendarySpawned")]
+    [HarmonyPatch("SpawnLegendaryBlock")]
     [HarmonyPostfix]
-    static void PostPnLegendarySpawned(StarShowerManager __instance, LegendaryBlocks legendary)
+    static void PostSpawnLegendaryBlock(BlocksManager __instance, GridCell spawnCell, BlockData blockData)
     {
-        
-        if (legendary == LegendaryBlocks.Quasar)
+        int quasarId = 50;
+        if (blockData.blockId == quasarId)
         {
-            long quasarId = 50;
+            Plugin.BepinLogger.LogInfo("A legendary block has spawned");
             bool uncheckedLocation = !ArchipelagoClient.session.Locations.AllLocationsChecked.Contains(quasarId);
-
-            Plugin.DoCheck(quasarId);   
+            if (uncheckedLocation)
+            {
+                Plugin.DoCheck(quasarId);   
+            }
         }
     }
 }
@@ -762,20 +782,6 @@ internal class ProgressManagerPatch
         }
         else
         {
-            var MachineBlocksField = AccessTools.Field(typeof(BlocksLibrary), "MachineBlocks");
-            var MachineBlocks = (BlockData[])MachineBlocksField.GetValue(lib);
-
-            if (MachineBlocks.ToList().Find(block => block.blockId == blockData.blockId))
-            {
-                // It's already unlocked...
-                if (!Plugin.UnlockedItemIds.Contains(blockData.blockId))
-                {
-                    Plugin.UnlockedItemIds.Add(blockData.blockId);
-                    Plugin.BepinLogger.LogWarning($"fixing data mismatch for machine block");
-                }
-                return;
-            }
-
             string actualName = LocalizationManager.GetTranslation("blockName/" + blockData.nameKey, true, 0, true, false, null, null, true);
 
             // Insert a special custom block data that will be picked up by the notification when doing getblockdatabyid
@@ -799,7 +805,6 @@ internal class ProgressManagerPatch
 
         return;
     }
-
 
 
     static void OnGameTick()
@@ -884,7 +889,7 @@ internal class ProgressManagerPatch
         }
 
         ItemInfo itemInfo;
-        if (Plugin.PendingItems.TryDequeue(out itemInfo))
+        while (Plugin.PendingItems.TryDequeue(out itemInfo))
         {
             Plugin.UnlockedItemIds.Add(itemInfo.ItemId);
 
