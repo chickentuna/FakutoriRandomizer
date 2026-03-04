@@ -95,7 +95,6 @@ public class Plugin : BaseUnityPlugin
         var harmony = new Harmony("com.chickentuna.archipelago");
         harmony.PatchAll();
 
-        // Soon even generators will possibly be checks
         UnlockedItemIds.Add(11);
         UnlockedItemIds.Add(14);
         UnlockedItemIds.Add(15);
@@ -249,44 +248,43 @@ class EditModeMenuPatch
         var menuItemsField = AccessTools.Field(typeof(EditModeMenu), "menuItems");
         var menuItems = (List<SelectMenuItem>)menuItemsField.GetValue(__instance);
         var lib = AbstractSingleton<BlocksManager>.Instance.blocksLibrary;
-        int menuIdx = 3;
 
         List<BlockData> machinesToKeepBecauseUnlocked = lib.machineBlocks.Where(blockData =>
             Plugin.UnlockedItemIds.Contains(blockData.blockId)
         ).ToList();
 
         List<ItemInfo> toAddToShop = new List<ItemInfo>();
-        int indexAtWhichToClear = 3 + 4; // because the generators aren't checks
+        int indexAtWhichToClear = 3;
 
-
-        foreach (BlockData originalMachineBlock in lib.machineBlocks)
+        double shopPriceReductionPercent = ((long)ArchipelagoClient.ServerData.slotData["extra_shop_checks"]) / 100.0;
+        foreach (var kv in ProgressManagerPatch.ShopLocations)
         {
-            SelectMenuItem menuItem = menuItems[menuIdx];
-            menuIdx++;
-            long shoplocationId = originalMachineBlock.blockId;
+            long shoplocationId = kv.Key;
 
-
-            // What is this replaced by?
-            ItemInfo itemInfo;
-            if (!ProgressManagerPatch.ShopLocations.TryGetValue(shoplocationId, out itemInfo))
-            {
-                continue;
-            }
+            ItemInfo itemInfo = kv.Value;
 
             // If location hasn't been checked, will need to go back into shop
             if (!ArchipelagoClient.session.Locations.AllLocationsChecked.Contains(shoplocationId))
             {
                 if (itemInfo.Player.Name == ArchipelagoClient.ServerData.SlotName)
                 {
+                    
+                    // Handle items 100X (filler items)
+                    if (itemInfo.ItemId >= 1000)
+                    {
+                        toAddToShop.Add(itemInfo); 
+                        continue;
+                    }
+
                     // Skip the item is already owned
-                    if (Plugin.UnlockedItemIds.Contains(originalMachineBlock.blockId))
+                    if (Plugin.UnlockedItemIds.Contains(shoplocationId))
                     {
                         continue;
                     }
 
                     BlockData blockForSale = ProgressManagerPatch.BaseElementBlocks[itemInfo.ItemId];
                     var unlockCostField = AccessTools.Field(typeof(BlockData), "UnlockCost");
-                    unlockCostField.SetValue(blockForSale, ProgressManagerPatch.BlockUnlockCosts[originalMachineBlock.blockId] / 10);
+                    unlockCostField.SetValue(blockForSale, (int)(ProgressManagerPatch.BlockUnlockCosts[shoplocationId] * shopPriceReductionPercent));
                     toAddToShop.Add(itemInfo);
                 }
                 else
@@ -323,6 +321,8 @@ class EditModeMenuPatch
         // Put unlocked machines back into the menu
         foreach (BlockData blockData in machinesToKeepBecauseUnlocked)
         {
+            Plugin.BepinLogger.LogInfo($"Putting {blockData.blockName} back into the shop because it's unlocked");
+
             AddItemMethod.Invoke(__instance, new object[] {
                 ProgressManagerPatch.BlockSprites[blockData.blockId],
                 blockData.blockName,
@@ -335,18 +335,57 @@ class EditModeMenuPatch
             });
         }
 
-
         // Put buyable things into the menu
         foreach (ItemInfo itemInfo in toAddToShop)
         {
-            BlockData blockForSale = ProgressManagerPatch.BaseElementBlocks[itemInfo.ItemId];
+            BlockData blockForSale = null;
+            
+            Plugin.BepinLogger.LogInfo($"Putting {itemInfo.ItemName} inside shop");
+
+            /*
+                item_name_to_id["500 gold"] = 1000
+                item_name_to_id["1000 gold"] = 1001
+                item_name_to_id["500 mana"] = 1002
+                item_name_to_id["Full starpower"] = 1003
+            */
+            var BlockIdField = AccessTools.Field(typeof(BlockData), "BlockId");
+            var NameKeyField = AccessTools.Field(typeof(BlockData), "NameKey");
+            var UnlockCostField = AccessTools.Field(typeof(BlockData), "UnlockCost");
+            if (itemInfo.ItemId >= 1000)
+            {
+                blockForSale = ScriptableObject.CreateInstance<BlockData>();
+                BlockIdField.SetValue(blockForSale, (int)itemInfo.ItemId); // we might need use the shoplocation id i dunno?
+                UnlockCostField.SetValue(blockForSale, ProgressManagerPatch.BlockUnlockCosts[itemInfo.LocationId]);
+                if (itemInfo.ItemId == 1000)
+                {
+                    NameKeyField.SetValue(blockForSale, $"custom_500 gold");
+                }
+                else if(itemInfo.ItemId == 1001)
+                {
+                    NameKeyField.SetValue(blockForSale, $"custom_1000 gold");
+                }
+                else if(itemInfo.ItemId == 1002)
+                {
+                    NameKeyField.SetValue(blockForSale, $"custom_500 mana");
+                }
+                else if(itemInfo.ItemId == 1003)
+                {
+                    NameKeyField.SetValue(blockForSale, $"custom Full starpower");
+                }
+            }
+            else
+            {
+                blockForSale = ProgressManagerPatch.BaseElementBlocks[itemInfo.ItemId];
+            }
 
             SelectionTool selectionTool = new UnlockMachineBlockTool(blockForSale);
 
             ProgressManagerPatch.ShopLocationIdFromBlockData.TryAdd(blockForSale, itemInfo.LocationId);
 
             AddItemMethod.Invoke(__instance, new object[] {
-                ProgressManagerPatch.BlockSprites[blockForSale.blockId],
+                ProgressManagerPatch.BlockSprites.ContainsKey(blockForSale.blockId) ?
+                ProgressManagerPatch.BlockSprites[blockForSale.blockId]
+                : ProgressManagerPatch.BlockSprites[1], //TODO: find sprites for coin mana ans starpower
                 blockForSale.blockName,
                 blockForSale.unlockCost.ToString(),
                 true,
@@ -371,10 +410,6 @@ class EditModeMenuPatch
         AbstractSingleton<SFXManager>.Instance.PlayUISfx(SFX.Menus.UnlockCurrency, 0f, null);
         UnityEngine.Object.Destroy(menuItems[atIndex].gameObject);
         menuItems.RemoveAt(atIndex);
-
-        //force close menu
-        // var GameplayManager = AbstractSingleton<GameplayManager>.Instance;
-        // GameplayManager.ToggleEdit(false); // <- buggy
 
         // I have just bought a check.
         if (ProgressManagerPatch.ShopLocationIdFromBlockData.TryGetValue(data, out long shopLocationId))
@@ -620,7 +655,7 @@ internal class ProgressManagerPatch
     static BlocksManager blocksManager;
     static bool AllowOnElementBlockSpawned = false;
     public static Dictionary<long, Sprite> BlockSprites;
-    public static Dictionary<long, int> BlockUnlockCosts;
+    public static Dictionary<long, int> BlockUnlockCosts = new Dictionary<long, int>();
     public static Dictionary<long, ItemInfo> ShopLocations = new();
     public static Dictionary<BlockData, long> ShopLocationIdFromBlockData = new Dictionary<BlockData, long>();
 
@@ -692,18 +727,22 @@ internal class ProgressManagerPatch
         var ElementBlocks = (BlockData[])ElementBlocksField.GetValue(lib);
         var MachineBlocks = (BlockData[])MachineBlocksField.GetValue(lib);
 
-        var ShowInCompendiumField = AccessTools.Field(typeof(BlockData), "ShowInCompendium");
+        foreach (var blockData in MachineBlocks)
+        {
+            if (blockData.blockId == 0)
+            {
+                var BlockIdField = AccessTools.Field(typeof(BlockData), "BlockId");
+                BlockIdField.SetValue(blockData, 100); // Setting this block id to 100 because zero is not allowed by archipelago   
+            }
+            BlockUnlockCosts.Add(blockData.blockId, blockData.unlockCost);
+        }
+
         BlockSprites = new Dictionary<long, Sprite>();
         foreach (var blockData in ElementBlocks.Concat(MachineBlocks))
         {
             BlockSprites.Add(blockData.blockId, blockData.uiSprite);
         }
 
-        BlockUnlockCosts = new Dictionary<long, int>();
-        foreach (var blockData in MachineBlocks)
-        {
-            BlockUnlockCosts.Add(blockData.blockId, blockData.unlockCost);
-        }
     }
 
     public static void PrintElementCount()
@@ -829,12 +868,19 @@ internal class ProgressManagerPatch
         if (!Plugin.didInitShop && ArchipelagoClient.Authenticated)
         {
             //Populate the shop
-            List<string> shopLocationNames = new List<string>();
-            shopLocationNames.Add("Disassembler");
-            shopLocationNames.Add("Puller");
-            shopLocationNames.Add("Pusher");
-            shopLocationNames.Add("Conveyor alternate");
-            shopLocationNames.Add("Cross conveyor");
+            List<string> shopLocationNames = new List<string>() {
+                "Disassembler",
+                "Puller",
+                "Pusher",
+                "Conveyor alternate",
+                "Cross conveyor",
+            };
+
+            var extraShopChecks = (long)ArchipelagoClient.ServerData.slotData["extra_shop_checks"];
+            for (int i = 0; i < extraShopChecks; i++)
+            {
+                shopLocationNames.Add($"Extra shop {i + 1}");
+            }
 
             var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
             var MachineBlocksField = AccessTools.Field(typeof(BlocksLibrary), "MachineBlocks");
@@ -843,21 +889,29 @@ internal class ProgressManagerPatch
             var shopLocationIds = new List<long>();
 
             shopLocationIds = shopLocationNames.Select(name =>
-            ArchipelagoClient.session.Locations.GetLocationIdFromName("Fakutori", name))
-            .Where(id => id != -1)
+                ArchipelagoClient.session.Locations.GetLocationIdFromName("Fakutori", name)
+            )
             .ToList();
+
+            Plugin.BepinLogger.LogInfo($"Scouting shop locations with ids: {string.Join(", ", shopLocationIds)}");
+
+            double shopPriceReductionPercent = ((long)ArchipelagoClient.ServerData.slotData["shop_price"]) / 100.0;
+            int unlockCost = (int)(2000  * shopPriceReductionPercent);
 
             ArchipelagoClient.session.Locations.ScoutLocationsAsync(shopLocationIds.ToArray()).ContinueWith(task =>
             {
                 if (task.IsCompletedSuccessfully)
                 {
+                    Plugin.BepinLogger.LogInfo($"Successfully scouted shop locations:");
                     var result = task.Result;
                     foreach (var pair in result)
                     {
                         long id = pair.Key;
                         ItemInfo itemInfo = pair.Value;
 
-                        ShopLocations.Add(id, itemInfo);
+                        Plugin.BepinLogger.LogInfo($" - {id}: {itemInfo.ItemName}");
+                        ShopLocations[id] = itemInfo;
+                        BlockUnlockCosts[itemInfo.LocationId] = unlockCost;
                     }
                 }
                 else
@@ -891,9 +945,43 @@ internal class ProgressManagerPatch
         ItemInfo itemInfo;
         while (Plugin.PendingItems.TryDequeue(out itemInfo))
         {
-            Plugin.UnlockedItemIds.Add(itemInfo.ItemId);
+            bool isFiller = itemInfo.ItemId >= 1000;
 
-            if (BaseElementBlocks.TryGetValue(itemInfo.ItemId, out BlockData blockData))
+
+            if (!isFiller)
+            {
+                Plugin.UnlockedItemIds.Add(itemInfo.ItemId);
+            }
+
+            if (isFiller)
+            {
+                CurrencyManager currencyManager = AbstractSingleton<CurrencyManager>.Instance;
+                if (itemInfo.ItemId == 1000)
+                {
+                    // Gain 500 gold
+                    currencyManager.AddMoney(500);
+                }
+                else if (itemInfo.ItemId == 1001)
+                {
+                    // Gain 1000 gold
+                    currencyManager.AddMoney(1000);
+                }
+                else if (itemInfo.ItemId == 1002)
+                {
+                    // Gain 500 mana
+                    currencyManager.AddMana(null, null, 500);
+                }
+                else if (itemInfo.ItemId == 1003)
+                {
+                    // Gain full starpower
+                    var StarShowerManager = AbstractSingleton<StarShowerManager>.Instance;
+                    StarShowerManager.FillGauge();
+                } else
+                {
+                    Plugin.BepinLogger.LogWarning($"Received unknown filler item with id {itemInfo.ItemId}");
+                }
+            }
+            else if (BaseElementBlocks.TryGetValue(itemInfo.ItemId, out BlockData blockData))
             {
                 ApplyUnlock(blockData, itemInfo);
             }
