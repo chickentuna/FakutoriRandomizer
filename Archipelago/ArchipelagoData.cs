@@ -16,7 +16,7 @@ public class ArchipelagoData
     /// </summary>
     private string seed;
 
-    private Dictionary<string, object> slotData;
+    public Dictionary<string, object> slotData;
 
     public bool NeedSlotData => slotData == null;
 
@@ -44,7 +44,7 @@ public class ArchipelagoData
         Plugin.BepinLogger.LogInfo("Slot Data received:");
         foreach (var kv in slotData)
         {
-            Plugin.BepinLogger.LogInfo($"    {kv.Key}: {kv.Value}");
+            Plugin.BepinLogger.LogInfo($"    {kv.Key}: {kv.Value} ({kv.Value.GetType()})");
         }
         seed = roomSeed;
     }

@@ -50,11 +50,30 @@ public class ArchipelagoClient
     /// </summary>
     private void SetupSession()
     {
-        session.MessageLog.OnMessageReceived += message => ArchipelagoConsole.LogMessage(message.ToString());
+        // session.MessageLog.OnMessageReceived += message => ArchipelagoConsole.LogMessage(message.ToString());
+        session.MessageLog.OnMessageReceived += OnMessageReceived;
         session.Items.ItemReceived += OnItemReceived;
         session.Socket.ErrorReceived += OnSessionErrorReceived;
         session.Socket.SocketClosed += OnSessionSocketClosed;
     }
+
+    static void OnMessageReceived(LogMessage message)
+    {
+        switch (message)
+        {
+            case ItemSendLogMessage itemSendLogMessage:
+                PlayerInfo receiverSlot = itemSendLogMessage.Receiver;
+                ItemInfo item = itemSendLogMessage.Item;
+
+                Plugin.AddToPendingSentItems(item, receiverSlot);
+                break;
+             default:
+                // for all other LogMessage types (e.g. plain text, generic prints)
+                Plugin.BepinLogger.LogInfo(message.ToString());
+                break;
+        }
+    }
+
 
     /// <summary>
     /// attempt to connect to the server with our connection info

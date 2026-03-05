@@ -24,6 +24,7 @@ using UnityEngine.UI;
 using TMPro;
 using UnityEngine.InputSystem;
 using Fakutori.VFX;
+using Archipelago.MultiClient.Net.Helpers;
 
 namespace FakutoriArchipelago;
 
@@ -47,9 +48,19 @@ public class Plugin : BaseUnityPlugin
 
 
     public static ConcurrentQueue<ItemInfo> PendingItems = new();
+    public static ConcurrentQueue<SentItemInfo> PendingSentItems = new();
     public static List<long> UnlockedItemIds = new();
     public static List<long> BlockIdsThatAreNotLocations = new();
 
+    public static void AddToPendingSentItems(ItemInfo item, PlayerInfo recipient)
+    {
+        var sentItemInfo = new SentItemInfo()
+        {
+            Item = item,
+            Recipient = recipient
+        };
+        PendingSentItems.Enqueue(sentItemInfo);
+    }
     public static void AddToPendingItems(ItemInfo item)
     {
         if (UnlockedItemIds.Contains(item.ItemId))
@@ -105,7 +116,7 @@ public class Plugin : BaseUnityPlugin
         BlockIdsThatAreNotLocations.Add(15);
         BlockIdsThatAreNotLocations.Add(16);
 
-        //TODO: muliworld stuff, including loading archipelago sprite
+        
     }
 
 }
@@ -113,7 +124,7 @@ public class Plugin : BaseUnityPlugin
 [HarmonyPatch(typeof(ElementBlock))]
 class ElementBlockPatch
 {
-    //TODO: handle TIME BLOCK.
+
     [HarmonyPatch("TransformInto")]
     [HarmonyPrefix]
     static bool PreTransformInto(ElementBlock __instance, BlockData newBlock, VFX vfx)
@@ -224,12 +235,12 @@ class BlockNamePropertyPatch
 class EditModeMenuPatch
 {
 
-    [HarmonyPatch("AddItem")]
-    [HarmonyPrefix]
-    static bool PreAddItem(EditModeMenu __instance, Sprite uiSprite, string name, string price, bool showShadow, SelectionTool tool, bool isLocked = false, int atIndex = -1)
-    {
-        return true;
-    }
+    public static Sprite MoneySprite;
+    public static Sprite ManaSprite;
+    public static Sprite StarPowerSprite;
+    public static Sprite ArchipelagoSprite;
+    public static Sprite ArchipelagoWhiteSprite;
+    public static Sprite ArchipelagoBlackSprite;
 
     [HarmonyPatch("FillItems")]
     [HarmonyPostfix]
@@ -256,7 +267,6 @@ class EditModeMenuPatch
         List<ItemInfo> toAddToShop = new List<ItemInfo>();
         int indexAtWhichToClear = 3;
 
-        double shopPriceReductionPercent = ((long)ArchipelagoClient.ServerData.slotData["extra_shop_checks"]) / 100.0;
         foreach (var kv in ProgressManagerPatch.ShopLocations)
         {
             long shoplocationId = kv.Key;
@@ -276,24 +286,25 @@ class EditModeMenuPatch
                         continue;
                     }
 
-                    // Skip the item is already owned
-                    if (Plugin.UnlockedItemIds.Contains(shoplocationId))
+                    // Skip the item if already owned
+                    // if (Plugin.UnlockedItemIds.Contains(shoplocationId))
+                    if (Plugin.UnlockedItemIds.Contains(itemInfo.ItemId))
                     {
                         continue;
                     }
 
                     BlockData blockForSale = ProgressManagerPatch.BaseElementBlocks[itemInfo.ItemId];
                     var unlockCostField = AccessTools.Field(typeof(BlockData), "UnlockCost");
-                    unlockCostField.SetValue(blockForSale, (int)(ProgressManagerPatch.BlockUnlockCosts[shoplocationId] * shopPriceReductionPercent));
+                    unlockCostField.SetValue(blockForSale, ProgressManagerPatch.BlockUnlockCosts[shoplocationId]);
                     toAddToShop.Add(itemInfo);
                 }
                 else
                 {
-                    //TODO: add archipelago logo to shop
+                    toAddToShop.Add(itemInfo);
                 }
+
             }
         }
-
 
 
         // Remove everything from the shop
@@ -351,31 +362,48 @@ class EditModeMenuPatch
             var BlockIdField = AccessTools.Field(typeof(BlockData), "BlockId");
             var NameKeyField = AccessTools.Field(typeof(BlockData), "NameKey");
             var UnlockCostField = AccessTools.Field(typeof(BlockData), "UnlockCost");
-            if (itemInfo.ItemId >= 1000)
+            Sprite sprite = null;
+            if (itemInfo.Player.Name != ArchipelagoClient.ServerData.SlotName)
+            {
+                Plugin.BepinLogger.LogInfo($"remote item in shop: {itemInfo.ItemId}");
+                // Remote item
+                blockForSale = ScriptableObject.CreateInstance<BlockData>();
+                BlockIdField.SetValue(blockForSale, (int)itemInfo.ItemId);
+                UnlockCostField.SetValue(blockForSale, ProgressManagerPatch.BlockUnlockCosts[itemInfo.LocationId]);
+                NameKeyField.SetValue(blockForSale, $"custom_{itemInfo.ItemDisplayName} ({itemInfo.Player.Name})");
+                sprite = ArchipelagoSprite;
+
+            }
+            else if (itemInfo.ItemId >= 1000)
             {
                 blockForSale = ScriptableObject.CreateInstance<BlockData>();
-                BlockIdField.SetValue(blockForSale, (int)itemInfo.ItemId); // we might need use the shoplocation id i dunno?
+                BlockIdField.SetValue(blockForSale, (int)itemInfo.ItemId);
                 UnlockCostField.SetValue(blockForSale, ProgressManagerPatch.BlockUnlockCosts[itemInfo.LocationId]);
                 if (itemInfo.ItemId == 1000)
                 {
                     NameKeyField.SetValue(blockForSale, $"custom_500 gold");
+                    sprite = MoneySprite;
                 }
                 else if(itemInfo.ItemId == 1001)
                 {
                     NameKeyField.SetValue(blockForSale, $"custom_1000 gold");
+                    sprite = MoneySprite;
                 }
                 else if(itemInfo.ItemId == 1002)
                 {
                     NameKeyField.SetValue(blockForSale, $"custom_500 mana");
+                    sprite = ManaSprite;
                 }
                 else if(itemInfo.ItemId == 1003)
                 {
-                    NameKeyField.SetValue(blockForSale, $"custom Full starpower");
+                    NameKeyField.SetValue(blockForSale, $"custom_Full starpower");
+                    sprite = StarPowerSprite;
                 }
             }
             else
             {
                 blockForSale = ProgressManagerPatch.BaseElementBlocks[itemInfo.ItemId];
+                sprite = ProgressManagerPatch.BlockSprites[blockForSale.blockId];
             }
 
             SelectionTool selectionTool = new UnlockMachineBlockTool(blockForSale);
@@ -383,9 +411,7 @@ class EditModeMenuPatch
             ProgressManagerPatch.ShopLocationIdFromBlockData.TryAdd(blockForSale, itemInfo.LocationId);
 
             AddItemMethod.Invoke(__instance, new object[] {
-                ProgressManagerPatch.BlockSprites.ContainsKey(blockForSale.blockId) ?
-                ProgressManagerPatch.BlockSprites[blockForSale.blockId]
-                : ProgressManagerPatch.BlockSprites[1], //TODO: find sprites for coin mana ans starpower
+                sprite != null ? sprite : ProgressManagerPatch.BlockSprites[1],
                 blockForSale.blockName,
                 blockForSale.unlockCost.ToString(),
                 true,
@@ -437,6 +463,7 @@ internal class BlocksLibraryPatch
 {
     public static Dictionary<int, BlockData> CustomBlockData = new();
     public static Dictionary<int, ItemInfo> CustomBlockDataItemInfo = new();
+    public static Dictionary<int, string> CustomBlockDataPlayerName = new();
     public static Dictionary<int, BlockData> CustomBlockDataOriginal = new();
 
 
@@ -503,22 +530,6 @@ internal class BlocksLibraryPatch
 [HarmonyPatch(typeof(Notification))]
 class NotificationPatch
 {
-    /*
-    [Error  : Unity Log] KeyNotFoundException: The given key '26' was not present in
- the dictionary.
-Stack trace:
-System.Collections.Generic.Dictionary`2[TKey,TValue].get_Item (TKey key) (at <c9
-d3ffd4b98649ee9989e1908eaca019>:0)
-FakutoriArchipelago.NotificationPatch.PreOpenCompendium (Notification __instance
-) (at /home/jpn/git/poulton/FakutoriArchipelago/Plugin.cs:481)
-(wrapper dynamic-method) Notification.DMD<Notification::OpenCompendium>(Notifica
-tion)
-UnityEngine.Events.InvokableCall.Invoke () (at <561971c91c08471b9e995b582c6b3074
->:0)
-UnityEngine.Events.UnityEvent.Invoke () (at <561971c91c08471b9e995b582c6b3074>:0
-)
-    */
-
 
     [HarmonyPatch("OpenCompendium")]
     [HarmonyPrefix]
@@ -527,7 +538,6 @@ UnityEngine.Events.UnityEvent.Invoke () (at <561971c91c08471b9e995b582c6b3074>:0
         var blockDataField = AccessTools.Field(typeof(Notification), "blockData");
         var blockData = (BlockData)blockDataField.GetValue(__instance);
 
-        
         if (BlocksLibraryPatch.CustomBlockDataOriginal.TryGetValue(blockData.blockId, out var actualBlockData))
         {
             AbstractSingleton<UIManager>.Instance.OpenCompendiumOnItem(actualBlockData);
@@ -584,26 +594,42 @@ UnityEngine.Events.UnityEvent.Invoke () (at <561971c91c08471b9e995b582c6b3074>:0
         var hasSourceLocation = data.HasSourceLocation;
         hasSourceLocationField.SetValue(__instance, hasSourceLocation);
 		BlockImage.sprite = blockData.uiSprite;
-		BadgeImage.sprite = ((data.Type == NotificationType.NewBlock) ? AbstractSingleton<Notifications>.Instance.newBlockBadge : AbstractSingleton<Notifications>.Instance.challengeCompletedBadge);
+		BadgeImage.sprite = (data.Type == NotificationType.NewBlock) ? AbstractSingleton<Notifications>.Instance.newBlockBadge : AbstractSingleton<Notifications>.Instance.challengeCompletedBadge;
 		BlockSymbol.sprite = blockData.icon;
 		
+        bool activeShowInCompendium = true;
+
         if (blockData.blockId < 0)
         {
             ItemInfo itemInfo = BlocksLibraryPatch.CustomBlockDataItemInfo[blockData.blockId];
-            String playerName = itemInfo.Player.Name == ArchipelagoClient.ServerData.SlotName ? "self" : itemInfo.Player.Name;
-            TypeText.text = LocalizationManager.GetTranslation("notifications/newItem") + playerName;
+            string playerName = BlocksLibraryPatch.CustomBlockDataPlayerName.TryGetValue(blockData.blockId, out var name) ? name : null;
+            
+            if (playerName == null)
+            {
+                playerName = itemInfo.Player.Name == ArchipelagoClient.ServerData.SlotName ? "self" : itemInfo.Player.Name;
+            }
+
+            if (data.Type == NotificationType.ChallengeCompleted)
+            {
+                TypeText.text = LocalizationManager.GetTranslation("notifications/sentItem") + playerName;
+                activeShowInCompendium = false; 
+            }
+            else
+            {
+                TypeText.text = LocalizationManager.GetTranslation("notifications/newItem") + playerName;
+            }
         }
         else
         {
-            TypeText.text = (LocalizationManager.GetTranslation("notifications/" + data.Type.ToString().Decapitalize()));
+            TypeText.text = LocalizationManager.GetTranslation("notifications/" + data.Type.ToString().Decapitalize());
         }
         
-		BlockNameText.text = (blockData.blockName);
+		BlockNameText.text = blockData.blockName;
 		UIShortcutButton locateButton = LocateButton;
-		InputAction[] inputActions = new InputAction[1] { controls.menus.notificationLocate };
+		InputAction[] inputActions = [controls.menus.notificationLocate];
 		UnityAction val = LocateSource;
 		locateButton.Init(labelKey: null, label: LocalizationManager.GetTranslation("notifications/locate"), inputActions: (InputAction[])(object)inputActions, action: val, disabled: !hasSourceLocation);
-		CompendiumButton.Init((InputAction[])(object)new InputAction[1] { controls.menus.notificationCompendium }, new UnityAction(OpenCompendium), null, disabled: false, LocalizationManager.GetTranslation("notifications/compendium"));
+		CompendiumButton.Init((InputAction[])(object)new InputAction[1] { controls.menus.notificationCompendium }, new UnityAction(OpenCompendium), null, disabled: !activeShowInCompendium, LocalizationManager.GetTranslation("notifications/compendium"));
 		DismissButton.Init((InputAction[])(object)new InputAction[1] { controls.menus.notificationDismiss }, new UnityAction(Dismiss), null, disabled: false, LocalizationManager.GetTranslation("notifications/dismiss"));
 		LayoutRebuilder.ForceRebuildLayoutImmediate(ButtonsContainerTransform);
 		LayoutRebuilder.ForceRebuildLayoutImmediate(RootTransform);
@@ -623,6 +649,10 @@ class LocalizationManagerPatch
         if (Term.StartsWith("notifications/newItem"))
         {
             __result = "Item received from ";
+            return false;
+        } else if (Term.StartsWith("notifications/sentItem"))
+        {
+            __result = "Item sent to ";
             return false;
         }
         return true;        
@@ -710,6 +740,7 @@ internal class ProgressManagerPatch
     [HarmonyPostfix]
     static void PostStart(ProgressManager __instance)
     {
+        
 
         Plugin.BepinLogger.LogInfo("ProgressManager Start called");
         AbstractSingleton<TimeManager>.Instance.OnTick.AddListener(OnGameTick);
@@ -734,6 +765,7 @@ internal class ProgressManagerPatch
                 var BlockIdField = AccessTools.Field(typeof(BlockData), "BlockId");
                 BlockIdField.SetValue(blockData, 100); // Setting this block id to 100 because zero is not allowed by archipelago   
             }
+            
             BlockUnlockCosts.Add(blockData.blockId, blockData.unlockCost);
         }
 
@@ -821,8 +853,6 @@ internal class ProgressManagerPatch
         }
         else
         {
-            string actualName = LocalizationManager.GetTranslation("blockName/" + blockData.nameKey, true, 0, true, false, null, null, true);
-
             // Insert a special custom block data that will be picked up by the notification when doing getblockdatabyid
             int count = BlocksLibraryPatch.CustomBlockData.Count();
             int customId = -(count + 1);
@@ -863,10 +893,35 @@ internal class ProgressManagerPatch
             ElementBlocksField.SetValue(lib, modifiedElementsBlocks);
 
             Plugin.didInitRecipes = true;
+
+
+
         }
 
         if (!Plugin.didInitShop && ArchipelagoClient.Authenticated)
         {
+            var moneyIcon = GameObject.Find("UI/HUD/Currencies/Money/Badge/Icon");
+            var manaIcon = GameObject.Find("UI/HUD/Currencies/Mana/Badge/Icon");
+            var lazyIcon = GameObject.Find("UI/HUD/Objective menu button/Content/Lazy");
+            EditModeMenuPatch.MoneySprite = moneyIcon.GetComponent<UnityEngine.UI.Image>().sprite;
+            EditModeMenuPatch.ManaSprite = manaIcon.GetComponent<UnityEngine.UI.Image>().sprite;
+            EditModeMenuPatch.StarPowerSprite = lazyIcon.GetComponentInChildren<UnityEngine.UI.Image>().sprite;
+
+            var bytes = File.ReadAllBytes("BepInEx/plugins/FakutoriArchipelago/color-icon.png");
+            var tex = new Texture2D(2,2);
+            tex.LoadImage(bytes);
+            EditModeMenuPatch.ArchipelagoSprite = Sprite.Create(tex,new Rect(0,0,tex.width,tex.height),new Vector2(0.5f,0.5f));
+
+            bytes = File.ReadAllBytes("BepInEx/plugins/FakutoriArchipelago/white-icon.png");
+            tex = new Texture2D(2,2);
+            tex.LoadImage(bytes);
+            EditModeMenuPatch.ArchipelagoWhiteSprite = Sprite.Create(tex,new Rect(0,0,tex.width,tex.height),new Vector2(0.5f,0.5f));
+
+            bytes = File.ReadAllBytes("BepInEx/plugins/FakutoriArchipelago/black-icon.png");
+            tex = new Texture2D(2,2);
+            tex.LoadImage(bytes);
+            EditModeMenuPatch.ArchipelagoBlackSprite = Sprite.Create(tex,new Rect(0,0,tex.width,tex.height),new Vector2(0.5f,0.5f));
+
             //Populate the shop
             List<string> shopLocationNames = new List<string>() {
                 "Disassembler",
@@ -895,8 +950,7 @@ internal class ProgressManagerPatch
 
             Plugin.BepinLogger.LogInfo($"Scouting shop locations with ids: {string.Join(", ", shopLocationIds)}");
 
-            double shopPriceReductionPercent = ((long)ArchipelagoClient.ServerData.slotData["shop_price"]) / 100.0;
-            int unlockCost = (int)(2000  * shopPriceReductionPercent);
+            int unlockCost = 2000;
 
             ArchipelagoClient.session.Locations.ScoutLocationsAsync(shopLocationIds.ToArray()).ContinueWith(task =>
             {
@@ -911,7 +965,18 @@ internal class ProgressManagerPatch
 
                         Plugin.BepinLogger.LogInfo($" - {id}: {itemInfo.ItemName}");
                         ShopLocations[id] = itemInfo;
-                        BlockUnlockCosts[itemInfo.LocationId] = unlockCost;
+                        BlockUnlockCosts.TryAdd(itemInfo.LocationId, unlockCost);
+                    }
+
+                    // Apply shop reduction
+                    double shopPriceReductionPercent = ((long)ArchipelagoClient.ServerData.slotData["shop_price"]) / 100.0;
+                    foreach (var kv in BlockUnlockCosts)
+                    {
+                        long locationId = kv.Key;
+                        int originalCost = kv.Value;
+                        int reducedCost = (int)(originalCost * shopPriceReductionPercent);
+                        BlockUnlockCosts[locationId] = reducedCost;
+                        Plugin.BepinLogger.LogInfo($"Applying shop price reduction for location {locationId}: {originalCost} -> {reducedCost}");
                     }
                 }
                 else
@@ -942,8 +1007,33 @@ internal class ProgressManagerPatch
             return;
         }
 
-        ItemInfo itemInfo;
-        while (Plugin.PendingItems.TryDequeue(out itemInfo))
+        while (Plugin.PendingSentItems.TryDequeue(out SentItemInfo sentItemInfo))
+        {
+            int count = BlocksLibraryPatch.CustomBlockData.Count();
+            int customId = -(count + 1);
+            var customBlockData = ScriptableObject.CreateInstance<BlockData>();
+
+            var BlockIdField = AccessTools.Field(typeof(BlockData), "BlockId");
+            var UISpriteField = AccessTools.Field(typeof(BlockData), "UISprite");
+            var IconField = AccessTools.Field(typeof(BlockData), "Icon");
+            var NameKeyField = AccessTools.Field(typeof(BlockData), "NameKey");
+
+            BlockIdField.SetValue(customBlockData, customId);
+            UISpriteField.SetValue(customBlockData, EditModeMenuPatch.ArchipelagoSprite);
+            IconField.SetValue(customBlockData, EditModeMenuPatch.ArchipelagoBlackSprite);
+            NameKeyField.SetValue(customBlockData, $"custom_{sentItemInfo.Item.ItemDisplayName} ({sentItemInfo.Item.ItemGame})");
+
+            BlocksLibraryPatch.CustomBlockData[customId] = customBlockData;
+            BlocksLibraryPatch.CustomBlockDataItemInfo[customId] = sentItemInfo.Item;
+            BlocksLibraryPatch.CustomBlockDataPlayerName[customId] = sentItemInfo.Recipient.Name;
+            BlocksLibraryPatch.CustomBlockDataOriginal[customId] = null;
+
+            NotificationsPatch.AllowQueueNotification = true;
+            AbstractSingleton<Notifications>.Instance.QueueNotification(NotificationType.ChallengeCompleted, customBlockData, null);
+            NotificationsPatch.AllowQueueNotification = false;
+        }
+
+        while (Plugin.PendingItems.TryDequeue(out ItemInfo itemInfo))
         {
             bool isFiller = itemInfo.ItemId >= 1000;
 
