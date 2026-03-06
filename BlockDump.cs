@@ -1,17 +1,10 @@
 ﻿using BepInEx;
-using BepInEx.Logging;
-using FakutoriArchipelago.Archipelago;
-using FakutoriArchipelago.Utils;
 using HarmonyLib;
+using Newtonsoft.Json;
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Threading;
 using UnityEngine;
-using UnityEngine.Events;
-using UnityEngine.UI;
-using Newtonsoft.Json;
 
 namespace FakutoriArchipelago;
 
@@ -35,7 +28,7 @@ public class BlockDump
 }
 
 public class BlockDumper
-    { 
+{
     public static void Do()
     {
         var ElementBlocksField = AccessTools.Field(typeof(BlocksLibrary), "ElementBlocks");
@@ -53,15 +46,15 @@ public class BlockDumper
 
         var dumps = blocks
             .Where(block => block != null)
-            .Select(block=> new BlockDump
-        {
-            blockName = block.blockName,
-            name = block.name,
-            id = block.blockId,
-            category = block.category?.name,
-            color = block.color?.colorName,
-            unlockedByDefault = block.unlockedByDefault,
-            properties = block.properties?
+            .Select(block => new BlockDump
+            {
+                blockName = block.blockName,
+                name = block.name,
+                id = block.blockId,
+                category = block.category?.name,
+                color = block.color?.colorName,
+                unlockedByDefault = block.unlockedByDefault,
+                properties = block.properties?
                 .Where(p => p?.property != null)
                 .Select(p => p.property.ToString())
                 .ToArray()

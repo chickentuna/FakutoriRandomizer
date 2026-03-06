@@ -1,17 +1,10 @@
 ﻿using BepInEx;
-using BepInEx.Logging;
-using FakutoriArchipelago.Archipelago;
-using FakutoriArchipelago.Utils;
 using HarmonyLib;
+using Newtonsoft.Json;
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Threading;
 using UnityEngine;
-using UnityEngine.Events;
-using UnityEngine.UI;
-using Newtonsoft.Json;
 
 namespace FakutoriArchipelago;
 

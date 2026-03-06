@@ -1,9 +1,7 @@
-﻿using System;
-
-public class RecipeRando
+﻿public class RecipeRando
 {
-	public RecipeRando()
-	{
+    public RecipeRando()
+    {
         /*
         GameplayManager gm = AbstractSingleton<GameplayManager>.Instance;
         var TitleScreenWakasField = AccessTools.Field(typeof(GameplayManager), "TitleScreenWakas");

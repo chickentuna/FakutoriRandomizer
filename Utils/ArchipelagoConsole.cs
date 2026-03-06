@@ -1,7 +1,7 @@
-﻿using System.Collections.Generic;
-using System.Linq;
-using BepInEx;
+﻿using BepInEx;
 using FakutoriArchipelago.Archipelago;
+using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
 namespace FakutoriArchipelago.Utils;
@@ -64,7 +64,7 @@ public static class ArchipelagoConsole
             Hidden = !Hidden;
             UpdateWindow();
         }
-        
+
         // draw client/server commands entry
         if (Hidden || !ArchipelagoClient.Authenticated) return;
 

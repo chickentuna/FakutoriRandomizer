@@ -1,7 +1,4 @@
-﻿using System;
-using System.Linq;
-using System.Threading;
-using Archipelago.MultiClient.Net;
+﻿using Archipelago.MultiClient.Net;
 using Archipelago.MultiClient.Net.BounceFeatures.DeathLink;
 using Archipelago.MultiClient.Net.Enums;
 using Archipelago.MultiClient.Net.Helpers;
@@ -9,6 +6,9 @@ using Archipelago.MultiClient.Net.MessageLog.Messages;
 using Archipelago.MultiClient.Net.Models;
 using Archipelago.MultiClient.Net.Packets;
 using FakutoriArchipelago.Utils;
+using System;
+using System.Linq;
+using System.Threading;
 
 namespace FakutoriArchipelago.Archipelago;
 
@@ -67,7 +67,7 @@ public class ArchipelagoClient
 
                 Plugin.AddToPendingSentItems(item, receiverSlot);
                 break;
-             default:
+            default:
                 // for all other LogMessage types (e.g. plain text, generic prints)
                 Plugin.BepinLogger.LogInfo(message.ToString());
                 break;
@@ -160,12 +160,12 @@ public class ArchipelagoClient
     /// <param name="helper">item helper which we can grab our item from</param>
     private void OnItemReceived(ReceivedItemsHelper helper)
     {
-        
+
         ItemInfo receivedItem = helper.DequeueItem();
 
         if (helper.Index <= ServerData.Index) return;
         ServerData.Index++;
-        
+
         ArchipelagoConsole.LogMessage($"Received item: {receivedItem.ItemId}  {receivedItem.ItemName} from {receivedItem.LocationId} {receivedItem.LocationName}");
         Plugin.AddToPendingItems(receivedItem);
 

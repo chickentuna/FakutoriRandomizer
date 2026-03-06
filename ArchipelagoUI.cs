@@ -1,11 +1,5 @@
-﻿using BepInEx;
-using BepInEx.Logging;
-using FakutoriArchipelago.Archipelago;
-using FakutoriArchipelago.Utils;
-using HarmonyLib;
-using System;
+﻿using FakutoriArchipelago.Archipelago;
 using UnityEngine;
-using UnityEngine.Events;
 using UnityEngine.UI;
 
 namespace FakutoriArchipelago;
@@ -116,7 +110,7 @@ public class ArchipelagoUI : MonoBehaviour
 
         // Mod label
         CreateText("ModInfo", Plugin.ModDisplayInfo, new Vector2(x, curY), font);
-        curY+= sepY;
+        curY += sepY;
 
         statusText = CreateText("StatusText", "", new Vector2(x, curY), font);
         curY += sepY;
@@ -141,7 +135,7 @@ public class ArchipelagoUI : MonoBehaviour
         playerField.text = ArchipelagoClient.ServerData.SlotName;
         passwordField.text = ArchipelagoClient.ServerData.Password;
 
-        
+
     }
 
     Button CreateButton(string name, string label, Vector2 pos, Font font)
@@ -171,7 +165,8 @@ public class ArchipelagoUI : MonoBehaviour
 
     void UpdateUI(bool show)
     {
-        if (show) {
+        if (show)
+        {
             root.SetActive(true);
         }
         else

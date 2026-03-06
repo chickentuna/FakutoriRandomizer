@@ -1,31 +1,24 @@
-﻿using Archipelago.MultiClient.Net.Models;
+﻿using Archipelago.MultiClient.Net.Helpers;
+using Archipelago.MultiClient.Net.Models;
 using BepInEx;
 using BepInEx.Logging;
-using Fakutori.Dialogue;
 using Fakutori.Grid;
+using Fakutori.VFX;
 using FakutoriArchipelago.Archipelago;
 using FakutoriArchipelago.Utils;
 using HarmonyLib;
 using I2.Loc;
-using MonoMod.Utils;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Reflection;
-using System.Threading;
-using UnityEngine;
-using UnityEngine.Android;
-using UnityEngine.Events;
-using UnityEngine.UI;
 // using UnityEngine.UIElements;
 using TMPro;
+using UnityEngine;
+using UnityEngine.Events;
 using UnityEngine.InputSystem;
-using Fakutori.VFX;
-using Archipelago.MultiClient.Net.Helpers;
-using UnityEngine.Analytics;
+using UnityEngine.UI;
 
 namespace FakutoriArchipelago;
 
@@ -765,7 +758,6 @@ class GameplayManagerPatch
 [HarmonyPatch(typeof(ProgressManager))]
 internal class ProgressManagerPatch
 {
-    static BlocksManager blocksManager;
     static bool AllowOnElementBlockSpawned = false;
     public static Dictionary<long, Sprite> BlockSprites;
     public static Dictionary<long, int> BlockUnlockCosts = new Dictionary<long, int>();
@@ -1007,7 +999,7 @@ internal class ProgressManagerPatch
         // var blocksProgressField = AccessTools.Field(typeof(ProgressManager), "blocksProgress");
         // var blocksProgress = (SortedDictionary<int, BlockProgress>)blocksProgressField.GetValue(progressManager);
         // blocksProgress.Clear();
-            
+
     }
 
     static void InitIcons()
