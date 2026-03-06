@@ -13,7 +13,6 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-// using UnityEngine.UIElements;
 using TMPro;
 using UnityEngine;
 using UnityEngine.Events;
@@ -22,8 +21,6 @@ using UnityEngine.UI;
 
 namespace FakutoriArchipelago;
 
-
-//TODO: clear progress when loading/starting game
 
 [BepInPlugin(PluginGUID, PluginName, PluginVersion)]
 public class Plugin : BaseUnityPlugin
@@ -40,9 +37,11 @@ public class Plugin : BaseUnityPlugin
 
     public static bool didRecipeDump = true;
     public static bool didBlockDump = true;
-    public static bool didInitShop = false;
-    public static bool didInitRecipes = false;
-    public static bool didInitUnlocks = false;
+
+    public static bool didInitShop = true;
+    public static bool didInitRecipes = true;
+    public static bool didInitUnlocks = true;
+
     public static bool didInitIcons = false;
 
     public static ConcurrentQueue<ItemInfo> PendingItems = new();
@@ -297,7 +296,7 @@ class EditModeMenuPatch
                         continue;
                     }
 
-                    BlockData blockForSale = ProgressManagerPatch.BaseElementBlocks[itemInfo.ItemId];
+                    BlockData blockForSale = ProgressManagerPatch.OriginalElementBlocksById[itemInfo.ItemId];
                     var unlockCostField = AccessTools.Field(typeof(BlockData), "UnlockCost");
                     unlockCostField.SetValue(blockForSale, ProgressManagerPatch.BlockUnlockCosts[shoplocationId]);
                     toAddToShop.Add(itemInfo);
@@ -401,7 +400,7 @@ class EditModeMenuPatch
             }
             else
             {
-                blockForSale = ProgressManagerPatch.BaseElementBlocks[itemInfo.ItemId];
+                blockForSale = ProgressManagerPatch.OriginalElementBlocksById[itemInfo.ItemId];
                 sprite = ProgressManagerPatch.BlockSprites[blockForSale.blockId];
             }
 
@@ -503,7 +502,7 @@ internal class BlocksLibraryPatch
             return false;
         }
 
-        if (ProgressManagerPatch.BaseElementBlocks.TryGetValue(id, out blockData))
+        if (ProgressManagerPatch.OriginalElementBlocksById.TryGetValue(id, out blockData))
         {
             __result = blockData;
             return false;
@@ -709,16 +708,20 @@ class GameplayManagerPatch
     }
     static void Reset()
     {
+        Plugin.PendingItems.Clear();
         Plugin.BepinLogger.LogInfo($"Resetting archipelago progress...");
 
         Plugin.ResetUnlocks();
         Plugin.didInitRecipes = false;
         Plugin.didInitUnlocks = false;
         Plugin.didInitShop = false;
+
+        Plugin.BepinLogger.LogInfo($"Pushing history:");
         foreach (var item in Plugin.ReceivedItemHistory)
         {
             if (!Plugin.UnlockedItemIds.Contains(item.ItemId))
             {
+                Plugin.BepinLogger.LogInfo($"   item: {item.ItemName}");
                 Plugin.PendingItems.Enqueue(item);
             }
         }
@@ -729,7 +732,6 @@ class GameplayManagerPatch
     static void PostLoadGame(GameplayManager __instance)
     {
         Reset();
-
     }
 
     [HarmonyPatch("NewGame")]
@@ -737,21 +739,6 @@ class GameplayManagerPatch
     static void PostNewGame(GameplayManager __instance)
     {
         Reset();
-    }
-
-    [HarmonyPatch("LoadGame")]
-    [HarmonyPrefix]
-    static void PreLoadGame(GameplayManager __instance)
-    {
-        RestoreElementBlocsk();
-
-    }
-
-    [HarmonyPatch("NewGame")]
-    [HarmonyPrefix]
-    static void PreNewGame(GameplayManager __instance)
-    {
-        RestoreElementBlocsk();
     }
 }
 
@@ -761,10 +748,11 @@ internal class ProgressManagerPatch
     static bool AllowOnElementBlockSpawned = false;
     public static Dictionary<long, Sprite> BlockSprites;
     public static Dictionary<long, int> BlockUnlockCosts = new Dictionary<long, int>();
+    public static Dictionary<long, int> OriginalBlockUnlockCosts = new Dictionary<long, int>();
     public static Dictionary<long, ItemInfo> ShopLocations = new();
     public static Dictionary<BlockData, long> ShopLocationIdFromBlockData = new Dictionary<BlockData, long>();
 
-    public static Dictionary<long, BlockData> BaseElementBlocks = new();
+    public static Dictionary<long, BlockData> OriginalElementBlocksById = new();
     public static BlockData[] OriginalElementBlocks = null;
 
     [HarmonyPatch("SetItemSeen")]
@@ -857,7 +845,7 @@ internal class ProgressManagerPatch
                 BlockIdField.SetValue(blockData, 100); // Setting this block id to 100 because zero is not allowed by archipelago   
             }
 
-            BlockUnlockCosts.Add(blockData.blockId, blockData.unlockCost);
+            OriginalBlockUnlockCosts.Add(blockData.blockId, blockData.unlockCost);
         }
 
         BlockSprites = new Dictionary<long, Sprite>();
@@ -866,11 +854,20 @@ internal class ProgressManagerPatch
             BlockSprites.Add(blockData.blockId, blockData.uiSprite);
         }
 
-        BaseElementBlocks = ElementBlocks.ToDictionary(v => (long)v.blockId, v => v);
+        OriginalElementBlocksById = ElementBlocks.ToDictionary(v => (long)v.blockId, v => v);
         OriginalElementBlocks = ElementBlocks.ToList().ToArray();
-
     }
 
+
+    public static void PrintBlocksProgressSmoke()
+    {
+        var blocksProgressField = AccessTools.Field(typeof(ProgressManager), "blocksProgress");
+        var progressManager = AbstractSingleton<ProgressManager>.Instance;
+        var blocksProgress = (SortedDictionary<int, BlockProgress>)blocksProgressField.GetValue(progressManager);
+        Plugin.BepinLogger.LogInfo($"blocksProgress for block smoke:");
+        var smokeId = 20;
+        Plugin.BepinLogger.LogInfo($" - is unlocked: {blocksProgress[smokeId].isUnlocked}");
+    }
 
     public static void PrintElementCount()
     {
@@ -880,9 +877,9 @@ internal class ProgressManagerPatch
         Plugin.BepinLogger.LogInfo($"Element blocks count in lib: {ElementBlocks.Length}");
     }
 
+    //TODO: some elements aren't marked as unlockable even when they are.
     public static void ApplyUnlock(BlockData blockData, ItemInfo itemInfo, bool unlockSilently = false)
     {
-        Plugin.BepinLogger.LogInfo($"Applying unlock for block {blockData.blockName} with id {blockData.blockId} and category {blockData.category}");
         ProgressManager progressManager = AbstractSingleton<ProgressManager>.Instance;
         var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
 
@@ -906,20 +903,6 @@ internal class ProgressManagerPatch
             var modifiedElementBlocks = ElementBlocks.Concat(new BlockData[] { blockData }).ToArray();
             ElementBlocksField.SetValue(lib, modifiedElementBlocks);
 
-            var blocksProgressField = AccessTools.Field(typeof(ProgressManager), "blocksProgress");
-            var blocksProgress = (SortedDictionary<int, BlockProgress>)blocksProgressField.GetValue(progressManager);
-            var blockProgress = new BlockProgress
-            {
-                isUnlocked = false,
-                isNewlyUnlocked = false
-            };
-            bool newProgress = blocksProgress.TryAdd(blockData.blockId, blockProgress);
-
-            if (!newProgress)
-            {
-                Plugin.BepinLogger.LogInfo($"Block already in blocksProgress, is this a save file?");
-                return;
-            }
             string actualName = LocalizationManager.GetTranslation("blockName/" + blockData.nameKey, true, 0, true, false, null, null, true);
 
             // Insert a special custom block data that will be picked up by the notification when doing getblockdatabyid
@@ -995,11 +978,21 @@ internal class ProgressManagerPatch
             return Plugin.UnlockedItemIds.Contains(blockData.blockId) || !ShowInCompendium;
         }).ToArray();
         ElementBlocksField.SetValue(lib, modifiedElementsBlocks);
-        ProgressManager progressManager = AbstractSingleton<ProgressManager>.Instance;
-        // var blocksProgressField = AccessTools.Field(typeof(ProgressManager), "blocksProgress");
-        // var blocksProgress = (SortedDictionary<int, BlockProgress>)blocksProgressField.GetValue(progressManager);
-        // blocksProgress.Clear();
-
+        
+        
+        // Do I really need to clear out blocksProgress?
+        //ProgressManager progressManager = AbstractSingleton<ProgressManager>.Instance;
+        //var blocksProgressField = AccessTools.Field(typeof(ProgressManager), "blocksProgress");
+        //var blocksProgress = (SortedDictionary<int, BlockProgress>)blocksProgressField.GetValue(progressManager);
+    
+        //blocksProgress.Clear();
+        //foreach (BlockData item in AbstractSingleton<BlocksManager>.Instance.blocksLibrary.elementBlocks.Concat(AbstractSingleton<BlocksManager>.Instance.blocksLibrary.machineBlocks))
+        //{
+        //    BlockProgress blockProgress = new BlockProgress();
+        //    blockProgress.isUnlocked = item.unlockedByDefault;
+        //    blockProgress.isNewlyUnlocked = item.unlockedByDefault;
+        //    blocksProgress.Add(item.blockId, blockProgress);
+        //}
     }
 
     static void InitIcons()
@@ -1031,6 +1024,7 @@ internal class ProgressManagerPatch
     {
         //Populate the shop
         ShopLocations.Clear();
+        BlockUnlockCosts.Clear();
         List<string> shopLocationNames = new List<string>() {
                 "Disassembler",
                 "Puller",
@@ -1058,24 +1052,31 @@ internal class ProgressManagerPatch
 
         Plugin.BepinLogger.LogInfo($"Scouting shop locations with ids: {string.Join(", ", shopLocationIds)}");
 
-        int unlockCost = 2000;
+        int defaultUnlockCost = 2000;
 
         ArchipelagoClient.session.Locations.ScoutLocationsAsync(shopLocationIds.ToArray()).ContinueWith(task =>
         {
             if (task.IsCompletedSuccessfully)
             {
-                var result = task.Result;
-                foreach (var pair in result)
-                {
-                    long id = pair.Key;
-                    ItemInfo itemInfo = pair.Value;
-
-                    ShopLocations[id] = itemInfo;
-                    BlockUnlockCosts.TryAdd(itemInfo.LocationId, unlockCost);
-                }
-
                 try
                 {
+                    var result = task.Result;
+                    foreach (var pair in result)
+                    {
+                        long shopLocationId = pair.Key;
+                        ItemInfo itemInfo = pair.Value;
+
+                        ShopLocations[shopLocationId] = itemInfo;
+                        if (OriginalBlockUnlockCosts.TryGetValue(shopLocationId, out var unlockCost))
+                        {
+                            BlockUnlockCosts.TryAdd(shopLocationId, unlockCost);
+                        }
+                        else
+                        {
+                            BlockUnlockCosts.TryAdd(shopLocationId, defaultUnlockCost);
+                        }
+                    }
+
 
                     // Apply shop reduction
                     double shopPriceReductionPercent = ((long)ArchipelagoClient.ServerData.slotData["shop_price"]) / 100.0;
@@ -1235,7 +1236,7 @@ internal class ProgressManagerPatch
                     Plugin.BepinLogger.LogWarning($"Received unknown filler item with id {itemInfo.ItemId}");
                 }
             }
-            else if (BaseElementBlocks.TryGetValue(itemInfo.ItemId, out BlockData blockData))
+            else if (OriginalElementBlocksById.TryGetValue(itemInfo.ItemId, out BlockData blockData))
             {
                 ApplyUnlock(blockData, itemInfo);
             }

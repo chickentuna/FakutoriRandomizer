@@ -3,64 +3,32 @@
     <PropertyGroup>
         <TargetFramework>netstandard2.1</TargetFramework>
         <AssemblyName>FakutoriArchipelago</AssemblyName>
-        <Description>Example Archipelago Plugin</Description>
+        <Description>Fakutori Archipelago Plugin</Description>
         <Version>1.0.0</Version>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <LangVersion>latest</LangVersion>
-        <!-- you may need this for getting the multiclient dll to output for .net 6 and netstandard 2.0 -->
-        <!--        <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>-->
+        
+        <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
         <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
         <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
         <RootNamespace>FakutoriArchipelago</RootNamespace>
-        <BaseOutputPath>bin</BaseOutputPath>
-        <ProduceReferenceAssembly>False</ProduceReferenceAssembly>
-        <PackageOutputPath>E:\SteamLibrary\steamapps\common\Fakutori Demo\BepInEx\plugins</PackageOutputPath>
     </PropertyGroup>
 
-    <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
-        <DebugSymbols>true</DebugSymbols>
-        <DebugType>full</DebugType>
-        <Optimize>false</Optimize>
+    <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
         <OutputPath>E:\SteamLibrary\steamapps\common\Fakutori Demo\BepInEx\plugins\$(AssemblyName)</OutputPath>
-        <DefineConstants>DEBUG;TRACE</DefineConstants>
-        <ErrorReport>prompt</ErrorReport>
     </PropertyGroup>
-    <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
-        <DebugType>none</DebugType>
-        <Optimize>true</Optimize>
-        <OutputPath>bin\Release\$(AssemblyName)</OutputPath>
-        <DefineConstants>TRACE</DefineConstants>
-        <ErrorReport>prompt</ErrorReport>
-    </PropertyGroup>
-
-    <Target Name="ZipMod" AfterTargets="PostBuildEvent" Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
-        <ZipDirectory SourceDirectory="bin\Release\$(AssemblyName)" DestinationFile="bin\Release\$(AssemblyName)-$(Version).zip" Overwrite="true" />
-    </Target>
 
     <ItemGroup>
         <PackageReference Include="Archipelago.MultiClient.Net" Version="6.6.0" />
-        <PackageReference Include="Archipelago.MultiClient.Net.Analyzers" Version="1.3.0">
-          <PrivateAssets>all</PrivateAssets>
-          <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
-        </PackageReference>
-        <PackageReference Include="BepInEx.Analyzers" Version="1.*" PrivateAssets="all" />
         <PackageReference Include="BepInEx.Core" Version="5.*" />
-        <PackageReference Include="UnityEngine.Modules" Version="2021.3.13" IncludeAssets="compile" />
-    </ItemGroup>
-
-    <ItemGroup Condition="'$(TargetFramework.TrimEnd(`0123456789`))' == 'net'">
-        <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+        <PackageReference Include="UnityEngine.Modules" Version="2021.3.13" />
+        <PackageReference Include="Archipelago.MultiClient.Net.Analyzers" Version="1.3.0" PrivateAssets="all" />
+        <PackageReference Include="BepInEx.Analyzers" Version="1.*" PrivateAssets="all" />
     </ItemGroup>
 
     <ItemGroup>
-      <Reference Include="Archipelago.MultiClient.Net">
-        <HintPath>..\..\.nuget\packages\archipelago.multiclient.net\6.6.0\lib\netstandard2.0\Archipelago.MultiClient.Net.dll</HintPath>
-      </Reference>
       <Reference Include="Assembly-CSharp">
         <HintPath>lib\Assembly-CSharp.dll</HintPath>
-      </Reference>
-      <Reference Include="Newtonsoft.Json">
-        <HintPath>..\..\.nuget\packages\archipelago.multiclient.net\6.6.0\lib\netstandard2.0\Newtonsoft.Json.dll</HintPath>
       </Reference>
       <Reference Include="Sirenix.Serialization">
         <HintPath>lib\Sirenix.Serialization.dll</HintPath>
