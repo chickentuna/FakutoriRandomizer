@@ -25,8 +25,12 @@ using TMPro;
 using UnityEngine.InputSystem;
 using Fakutori.VFX;
 using Archipelago.MultiClient.Net.Helpers;
+using UnityEngine.Analytics;
 
 namespace FakutoriArchipelago;
+
+
+//TODO: clear progress when loading/starting game
 
 [BepInPlugin(PluginGUID, PluginName, PluginVersion)]
 public class Plugin : BaseUnityPlugin
@@ -45,15 +49,22 @@ public class Plugin : BaseUnityPlugin
     public static bool didBlockDump = true;
     public static bool didInitShop = false;
     public static bool didInitRecipes = false;
-
+    public static bool didInitUnlocks = false;
+    public static bool didInitIcons = false;
 
     public static ConcurrentQueue<ItemInfo> PendingItems = new();
+    public static List<ItemInfo> ReceivedItemHistory = new();
     public static ConcurrentQueue<SentItemInfo> PendingSentItems = new();
     public static List<long> UnlockedItemIds = new();
     public static List<long> BlockIdsThatAreNotLocations = new();
 
     public static void AddToPendingSentItems(ItemInfo item, PlayerInfo recipient)
     {
+        if (recipient.Name == ArchipelagoClient.ServerData.SlotName)
+        {
+            return;
+        }
+
         var sentItemInfo = new SentItemInfo()
         {
             Item = item,
@@ -63,11 +74,17 @@ public class Plugin : BaseUnityPlugin
     }
     public static void AddToPendingItems(ItemInfo item)
     {
+        ReceivedItemHistory.Add(item);
         if (UnlockedItemIds.Contains(item.ItemId))
         {
             return;
         }
         PendingItems.Enqueue(item);
+    }
+
+    public static void OnAuthenticated()
+    {
+        // Doing anything here seems to crash the game
     }
 
     public static void DoCheck(long locationId)
@@ -106,17 +123,22 @@ public class Plugin : BaseUnityPlugin
         var harmony = new Harmony("com.chickentuna.archipelago");
         harmony.PatchAll();
 
-        UnlockedItemIds.Add(11);
-        UnlockedItemIds.Add(14);
-        UnlockedItemIds.Add(15);
-        UnlockedItemIds.Add(16);
-
         BlockIdsThatAreNotLocations.Add(11);
         BlockIdsThatAreNotLocations.Add(14);
         BlockIdsThatAreNotLocations.Add(15);
         BlockIdsThatAreNotLocations.Add(16);
 
-        
+        ResetUnlocks();
+    }
+
+    public static void ResetUnlocks()
+    {
+        UnlockedItemIds.Clear();
+        // Base Elements
+        UnlockedItemIds.Add(11);
+        UnlockedItemIds.Add(14);
+        UnlockedItemIds.Add(15);
+        UnlockedItemIds.Add(16);
     }
 
 }
@@ -161,11 +183,11 @@ class ElementBlockPatch
                 return true;
             }
             BlockData blockData = (
-                __instance.blockData.HasProperty(BlockProperty.Aerial) 
-                ? AbstractSingleton<BlocksManager>.Instance.blocksLibrary.riseProduct 
+                __instance.blockData.HasProperty(BlockProperty.Aerial)
+                ? AbstractSingleton<BlocksManager>.Instance.blocksLibrary.riseProduct
                 : (
-                    __instance.blockData.HasProperty(BlockProperty.Weightless) 
-                    ? null 
+                    __instance.blockData.HasProperty(BlockProperty.Weightless)
+                    ? null
                     : AbstractSingleton<BlocksManager>.Instance.blocksLibrary.fallProduct
                 )
             );
@@ -186,7 +208,7 @@ class ElementBlockPatch
 [HarmonyPatch(typeof(Notifications))]
 class NotificationsPatch
 {
-    
+
     public static bool AllowQueueNotification = false;
 
     [HarmonyPatch("QueueNotification")]
@@ -219,16 +241,6 @@ class BlockNamePropertyPatch
         }
         return true;
     }
-
-    [HarmonyPatch("blockName", MethodType.Getter)]
-    [HarmonyPostfix]
-    static void Postfix(BlockData __instance, ref string __result)
-    {
-        if (__result == "Quartz")
-        {
-            __result = __result + " (" + __instance.color.colorName + ")";
-        }
-    }
 }
 
 [HarmonyPatch(typeof(EditModeMenu))]
@@ -240,7 +252,7 @@ class EditModeMenuPatch
     public static Sprite StarPowerSprite;
     public static Sprite ArchipelagoSprite;
     public static Sprite ArchipelagoWhiteSprite;
-    public static Sprite ArchipelagoBlackSprite;
+    public static Sprite ArchipelagoSDFSprite;
 
     [HarmonyPatch("FillItems")]
     [HarmonyPostfix]
@@ -252,7 +264,6 @@ class EditModeMenuPatch
         {
             return;
         }
-        Plugin.BepinLogger.LogInfo($"PostFillItems");
 
 
         // Game has just filled the menu with the standard icons.
@@ -278,11 +289,11 @@ class EditModeMenuPatch
             {
                 if (itemInfo.Player.Name == ArchipelagoClient.ServerData.SlotName)
                 {
-                    
+
                     // Handle items 100X (filler items)
                     if (itemInfo.ItemId >= 1000)
                     {
-                        toAddToShop.Add(itemInfo); 
+                        toAddToShop.Add(itemInfo);
                         continue;
                     }
 
@@ -332,8 +343,6 @@ class EditModeMenuPatch
         // Put unlocked machines back into the menu
         foreach (BlockData blockData in machinesToKeepBecauseUnlocked)
         {
-            Plugin.BepinLogger.LogInfo($"Putting {blockData.blockName} back into the shop because it's unlocked");
-
             AddItemMethod.Invoke(__instance, new object[] {
                 ProgressManagerPatch.BlockSprites[blockData.blockId],
                 blockData.blockName,
@@ -342,7 +351,7 @@ class EditModeMenuPatch
                 new PlaceMachineBlockTool(blockData) as SelectionTool,
                 false,
                 -1
-         
+
             });
         }
 
@@ -350,8 +359,6 @@ class EditModeMenuPatch
         foreach (ItemInfo itemInfo in toAddToShop)
         {
             BlockData blockForSale = null;
-            
-            Plugin.BepinLogger.LogInfo($"Putting {itemInfo.ItemName} inside shop");
 
             /*
                 item_name_to_id["500 gold"] = 1000
@@ -365,7 +372,6 @@ class EditModeMenuPatch
             Sprite sprite = null;
             if (itemInfo.Player.Name != ArchipelagoClient.ServerData.SlotName)
             {
-                Plugin.BepinLogger.LogInfo($"remote item in shop: {itemInfo.ItemId}");
                 // Remote item
                 blockForSale = ScriptableObject.CreateInstance<BlockData>();
                 BlockIdField.SetValue(blockForSale, (int)itemInfo.ItemId);
@@ -384,17 +390,17 @@ class EditModeMenuPatch
                     NameKeyField.SetValue(blockForSale, $"custom_500 gold");
                     sprite = MoneySprite;
                 }
-                else if(itemInfo.ItemId == 1001)
+                else if (itemInfo.ItemId == 1001)
                 {
                     NameKeyField.SetValue(blockForSale, $"custom_1000 gold");
                     sprite = MoneySprite;
                 }
-                else if(itemInfo.ItemId == 1002)
+                else if (itemInfo.ItemId == 1002)
                 {
                     NameKeyField.SetValue(blockForSale, $"custom_500 mana");
                     sprite = ManaSprite;
                 }
-                else if(itemInfo.ItemId == 1003)
+                else if (itemInfo.ItemId == 1003)
                 {
                     NameKeyField.SetValue(blockForSale, $"custom_Full starpower");
                     sprite = StarPowerSprite;
@@ -479,6 +485,21 @@ internal class BlocksLibraryPatch
         }
     }
 
+    [HarmonyPatch("ContributesToUnlockedBlocksCount")]
+    [HarmonyPrefix]
+    public static bool PreContributesToUnlockedBlocksCount(BlocksLibrary __instance, int blockId, ref bool __result)
+    {
+        BlockData blockDataById = __instance.GetBlockDataById(blockId);
+        if (blockDataById == null)
+        {
+            __result = false;
+            return false;
+        }
+
+        return true;
+    }
+
+
     [HarmonyPatch("GetBlockDataById")]
     [HarmonyPrefix]
     public static bool PreGetBlockDataById(BlocksLibrary __instance, int id, ref BlockData __result)
@@ -544,15 +565,15 @@ class NotificationPatch
             return false;
         }
         return true;
-    } 
+    }
 
     [HarmonyPatch("Init")]
     [HarmonyPrefix]
     static bool PreInit(Notification __instance, SerializedNotification data)
-	{
+    {
         var BindShortcutMethod = AccessTools.Method(typeof(Notification), "BindShortcuts");
         var BindShortcuts = (Action)Delegate.CreateDelegate(typeof(Action), __instance, BindShortcutMethod);
-    	
+
         BindShortcuts();
 
         var blockDataField = AccessTools.Field(typeof(Notification), "blockData");
@@ -572,7 +593,7 @@ class NotificationPatch
         var LocateSourceMethod = AccessTools.Method(typeof(Notification), "LocateSource");
         var OpenCompendiumMethod = AccessTools.Method(typeof(Notification), "OpenCompendium");
         var DismissMethod = AccessTools.Method(typeof(Notification), "Dismiss");
-        
+
         var BlockImage = (Image)BlockImageField.GetValue(__instance);
         var BadgeImage = (Image)BadgeImageField.GetValue(__instance);
         var BlockSymbol = (Image)BlockSymbolField.GetValue(__instance);
@@ -593,17 +614,17 @@ class NotificationPatch
         sourceLocationField.SetValue(__instance, data.SourceLocation);
         var hasSourceLocation = data.HasSourceLocation;
         hasSourceLocationField.SetValue(__instance, hasSourceLocation);
-		BlockImage.sprite = blockData.uiSprite;
-		BadgeImage.sprite = (data.Type == NotificationType.NewBlock) ? AbstractSingleton<Notifications>.Instance.newBlockBadge : AbstractSingleton<Notifications>.Instance.challengeCompletedBadge;
-		BlockSymbol.sprite = blockData.icon;
-		
+        BlockImage.sprite = blockData.uiSprite;
+        BadgeImage.sprite = (data.Type == NotificationType.NewBlock) ? AbstractSingleton<Notifications>.Instance.newBlockBadge : AbstractSingleton<Notifications>.Instance.challengeCompletedBadge;
+        BlockSymbol.sprite = blockData.icon;
+
         bool activeShowInCompendium = true;
 
         if (blockData.blockId < 0)
         {
             ItemInfo itemInfo = BlocksLibraryPatch.CustomBlockDataItemInfo[blockData.blockId];
             string playerName = BlocksLibraryPatch.CustomBlockDataPlayerName.TryGetValue(blockData.blockId, out var name) ? name : null;
-            
+
             if (playerName == null)
             {
                 playerName = itemInfo.Player.Name == ArchipelagoClient.ServerData.SlotName ? "self" : itemInfo.Player.Name;
@@ -612,7 +633,7 @@ class NotificationPatch
             if (data.Type == NotificationType.ChallengeCompleted)
             {
                 TypeText.text = LocalizationManager.GetTranslation("notifications/sentItem") + playerName;
-                activeShowInCompendium = false; 
+                activeShowInCompendium = false;
             }
             else
             {
@@ -623,19 +644,19 @@ class NotificationPatch
         {
             TypeText.text = LocalizationManager.GetTranslation("notifications/" + data.Type.ToString().Decapitalize());
         }
-        
-		BlockNameText.text = blockData.blockName;
-		UIShortcutButton locateButton = LocateButton;
-		InputAction[] inputActions = [controls.menus.notificationLocate];
-		UnityAction val = LocateSource;
-		locateButton.Init(labelKey: null, label: LocalizationManager.GetTranslation("notifications/locate"), inputActions: (InputAction[])(object)inputActions, action: val, disabled: !hasSourceLocation);
-		CompendiumButton.Init((InputAction[])(object)new InputAction[1] { controls.menus.notificationCompendium }, new UnityAction(OpenCompendium), null, disabled: !activeShowInCompendium, LocalizationManager.GetTranslation("notifications/compendium"));
-		DismissButton.Init((InputAction[])(object)new InputAction[1] { controls.menus.notificationDismiss }, new UnityAction(Dismiss), null, disabled: false, LocalizationManager.GetTranslation("notifications/dismiss"));
-		LayoutRebuilder.ForceRebuildLayoutImmediate(ButtonsContainerTransform);
-		LayoutRebuilder.ForceRebuildLayoutImmediate(RootTransform);
+
+        BlockNameText.text = blockData.blockName;
+        UIShortcutButton locateButton = LocateButton;
+        InputAction[] inputActions = [controls.menus.notificationLocate];
+        UnityAction val = LocateSource;
+        locateButton.Init(labelKey: null, label: LocalizationManager.GetTranslation("notifications/locate"), inputActions: (InputAction[])(object)inputActions, action: val, disabled: !hasSourceLocation);
+        CompendiumButton.Init((InputAction[])(object)new InputAction[1] { controls.menus.notificationCompendium }, new UnityAction(OpenCompendium), null, disabled: !activeShowInCompendium, LocalizationManager.GetTranslation("notifications/compendium"));
+        DismissButton.Init((InputAction[])(object)new InputAction[1] { controls.menus.notificationDismiss }, new UnityAction(Dismiss), null, disabled: false, LocalizationManager.GetTranslation("notifications/dismiss"));
+        LayoutRebuilder.ForceRebuildLayoutImmediate(ButtonsContainerTransform);
+        LayoutRebuilder.ForceRebuildLayoutImmediate(RootTransform);
 
         return false;
-	}
+    }
 }
 
 
@@ -650,12 +671,13 @@ class LocalizationManagerPatch
         {
             __result = "Item received from ";
             return false;
-        } else if (Term.StartsWith("notifications/sentItem"))
+        }
+        else if (Term.StartsWith("notifications/sentItem"))
         {
             __result = "Item sent to ";
             return false;
         }
-        return true;        
+        return true;
     }
 }
 
@@ -673,9 +695,70 @@ class BlocksManagerPatch
             bool uncheckedLocation = !ArchipelagoClient.session.Locations.AllLocationsChecked.Contains(quasarId);
             if (uncheckedLocation)
             {
-                Plugin.DoCheck(quasarId);   
+                Plugin.DoCheck(quasarId);
             }
         }
+    }
+}
+
+[HarmonyPatch(typeof(GameplayManager))]
+class GameplayManagerPatch
+{
+
+    static void RestoreElementBlocsk()
+    {
+        if (ProgressManagerPatch.OriginalElementBlocks != null)
+        {
+            BlocksLibrary lib = AbstractSingleton<BlocksManager>.Instance.blocksLibrary;
+            var ElementBlocksField = AccessTools.Field(typeof(BlocksLibrary), "ElementBlocks");
+            ElementBlocksField.SetValue(lib, ProgressManagerPatch.OriginalElementBlocks);
+        }
+    }
+    static void Reset()
+    {
+        Plugin.BepinLogger.LogInfo($"Resetting archipelago progress...");
+
+        Plugin.ResetUnlocks();
+        Plugin.didInitRecipes = false;
+        Plugin.didInitUnlocks = false;
+        Plugin.didInitShop = false;
+        foreach (var item in Plugin.ReceivedItemHistory)
+        {
+            if (!Plugin.UnlockedItemIds.Contains(item.ItemId))
+            {
+                Plugin.PendingItems.Enqueue(item);
+            }
+        }
+    }
+
+    [HarmonyPatch("LoadGame")]
+    [HarmonyPostfix]
+    static void PostLoadGame(GameplayManager __instance)
+    {
+        Reset();
+
+    }
+
+    [HarmonyPatch("NewGame")]
+    [HarmonyPostfix]
+    static void PostNewGame(GameplayManager __instance)
+    {
+        Reset();
+    }
+
+    [HarmonyPatch("LoadGame")]
+    [HarmonyPrefix]
+    static void PreLoadGame(GameplayManager __instance)
+    {
+        RestoreElementBlocsk();
+
+    }
+
+    [HarmonyPatch("NewGame")]
+    [HarmonyPrefix]
+    static void PreNewGame(GameplayManager __instance)
+    {
+        RestoreElementBlocsk();
     }
 }
 
@@ -690,7 +773,8 @@ internal class ProgressManagerPatch
     public static Dictionary<BlockData, long> ShopLocationIdFromBlockData = new Dictionary<BlockData, long>();
 
     public static Dictionary<long, BlockData> BaseElementBlocks = new();
-    
+    public static BlockData[] OriginalElementBlocks = null;
+
     [HarmonyPatch("SetItemSeen")]
     [HarmonyPrefix]
     static bool PreSetItemSeen(ProgressManager __instance, BlockData blockData)
@@ -702,7 +786,25 @@ internal class ProgressManagerPatch
         return true;
     }
 
-    
+
+
+    [HarmonyPatch("OnBlockDespawned")]
+    [HarmonyPrefix]
+    static bool PreOnBlockDespawned(ProgressManager __instance, BlockData blockData)
+    {
+        if (AbstractSingleton<GameplayManager>.Instance.state != GameplayManager.GameplayState.Cutscene)
+        {
+            var blocksProgressField = AccessTools.Field(typeof(ProgressManager), "blocksProgress");
+            var blocksProgress = (SortedDictionary<int, BlockProgress>)blocksProgressField.GetValue(__instance);
+            if (blocksProgress.ContainsKey(blockData.blockId))
+            {
+                return true;
+            }
+            return false;
+        }
+        return true;
+    }
+
 
     [HarmonyPatch("OnElementBlockSpawned")]
     [HarmonyPrefix]
@@ -740,8 +842,6 @@ internal class ProgressManagerPatch
     [HarmonyPostfix]
     static void PostStart(ProgressManager __instance)
     {
-        
-
         Plugin.BepinLogger.LogInfo("ProgressManager Start called");
         AbstractSingleton<TimeManager>.Instance.OnTick.AddListener(OnGameTick);
 
@@ -750,7 +850,6 @@ internal class ProgressManagerPatch
 
         ui.Init();
         AbstractSingleton<TimeManager>.Instance.OnTick.AddListener(ui.OnTick);
-        blocksManager = AbstractSingleton<BlocksManager>.Instance;
 
         var ElementBlocksField = AccessTools.Field(typeof(BlocksLibrary), "ElementBlocks");
         var MachineBlocksField = AccessTools.Field(typeof(BlocksLibrary), "MachineBlocks");
@@ -765,7 +864,7 @@ internal class ProgressManagerPatch
                 var BlockIdField = AccessTools.Field(typeof(BlockData), "BlockId");
                 BlockIdField.SetValue(blockData, 100); // Setting this block id to 100 because zero is not allowed by archipelago   
             }
-            
+
             BlockUnlockCosts.Add(blockData.blockId, blockData.unlockCost);
         }
 
@@ -775,7 +874,11 @@ internal class ProgressManagerPatch
             BlockSprites.Add(blockData.blockId, blockData.uiSprite);
         }
 
+        BaseElementBlocks = ElementBlocks.ToDictionary(v => (long)v.blockId, v => v);
+        OriginalElementBlocks = ElementBlocks.ToList().ToArray();
+
     }
+
 
     public static void PrintElementCount()
     {
@@ -785,11 +888,12 @@ internal class ProgressManagerPatch
         Plugin.BepinLogger.LogInfo($"Element blocks count in lib: {ElementBlocks.Length}");
     }
 
-    public static void ApplyUnlock(BlockData blockData, ItemInfo itemInfo)
+    public static void ApplyUnlock(BlockData blockData, ItemInfo itemInfo, bool unlockSilently = false)
     {
+        Plugin.BepinLogger.LogInfo($"Applying unlock for block {blockData.blockName} with id {blockData.blockId} and category {blockData.category}");
         ProgressManager progressManager = AbstractSingleton<ProgressManager>.Instance;
         var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
-        
+
         if (blockData.category.name != "Machine")
         {
             var ElementBlocksField = AccessTools.Field(typeof(BlocksLibrary), "ElementBlocks");
@@ -812,11 +916,18 @@ internal class ProgressManagerPatch
 
             var blocksProgressField = AccessTools.Field(typeof(ProgressManager), "blocksProgress");
             var blocksProgress = (SortedDictionary<int, BlockProgress>)blocksProgressField.GetValue(progressManager);
-            var blockProgress = new BlockProgress();
-            blockProgress.isUnlocked = false;
-            blockProgress.isNewlyUnlocked = false;
-            blocksProgress.Add(blockData.blockId, blockProgress);
+            var blockProgress = new BlockProgress
+            {
+                isUnlocked = false,
+                isNewlyUnlocked = false
+            };
+            bool newProgress = blocksProgress.TryAdd(blockData.blockId, blockProgress);
 
+            if (!newProgress)
+            {
+                Plugin.BepinLogger.LogInfo($"Block already in blocksProgress, is this a save file?");
+                return;
+            }
             string actualName = LocalizationManager.GetTranslation("blockName/" + blockData.nameKey, true, 0, true, false, null, null, true);
 
             // Insert a special custom block data that will be picked up by the notification when doing getblockdatabyid
@@ -844,7 +955,7 @@ internal class ProgressManagerPatch
                 progressManager.OnElementBlockSpawned(blockData, null);
                 AllowOnElementBlockSpawned = false;
             }
-            
+
             NotificationsPatch.AllowQueueNotification = true;
             // In this line, blockData is used only to access id
             AbstractSingleton<Notifications>.Instance.QueueNotification(NotificationType.NewBlock, customBlockData, null);
@@ -853,77 +964,82 @@ internal class ProgressManagerPatch
         }
         else
         {
-            // Insert a special custom block data that will be picked up by the notification when doing getblockdatabyid
-            int count = BlocksLibraryPatch.CustomBlockData.Count();
-            int customId = -(count + 1);
-            var customBlockData = ScriptableObject.Instantiate(blockData);
+            if (!unlockSilently)
+            {
+                // Insert a special custom block data that will be picked up by the notification when doing getblockdatabyid
+                int count = BlocksLibraryPatch.CustomBlockData.Count();
+                int customId = -(count + 1);
+                var customBlockData = ScriptableObject.Instantiate(blockData);
 
-            var BlockIdField = AccessTools.Field(typeof(BlockData), "BlockId");
-            BlockIdField.SetValue(customBlockData, customId);
+                var BlockIdField = AccessTools.Field(typeof(BlockData), "BlockId");
+                BlockIdField.SetValue(customBlockData, customId);
 
-            BlocksLibraryPatch.CustomBlockData[customId] = customBlockData;
-            BlocksLibraryPatch.CustomBlockDataItemInfo[customId] = itemInfo;
-            BlocksLibraryPatch.CustomBlockDataOriginal[customId] = blockData;
+                BlocksLibraryPatch.CustomBlockData[customId] = customBlockData;
+                BlocksLibraryPatch.CustomBlockDataItemInfo[customId] = itemInfo;
+                BlocksLibraryPatch.CustomBlockDataOriginal[customId] = blockData;
 
-            NotificationsPatch.AllowQueueNotification = true;
-            AbstractSingleton<Notifications>.Instance.QueueNotification(NotificationType.NewBlock, customBlockData, null);
+                NotificationsPatch.AllowQueueNotification = true;
+                AbstractSingleton<Notifications>.Instance.QueueNotification(NotificationType.NewBlock, customBlockData, null);
+                NotificationsPatch.AllowQueueNotification = false;
+            }
             AbstractSingleton<ProgressManager>.Instance.UnlockMachine(blockData);
             Plugin.BepinLogger.LogInfo($"Unlocked machine block {blockData.blockName}");
-            NotificationsPatch.AllowQueueNotification = false;
         }
 
         return;
     }
 
-
-    static void OnGameTick()
+    static void InitRecipes()
     {
-        if (!Plugin.didInitRecipes && ArchipelagoClient.Authenticated)
+        // Remove all unlocked blocks from game
+        BlocksLibrary lib = AbstractSingleton<BlocksManager>.Instance.blocksLibrary;
+        var ElementBlocksField = AccessTools.Field(typeof(BlocksLibrary), "ElementBlocks");
+        var ElementBlocks = (BlockData[])ElementBlocksField.GetValue(lib);
+
+        var modifiedElementsBlocks = ElementBlocks.Where(blockData =>
         {
-            // Remove all unlocked blocks from game
-            BlocksLibrary lib = AbstractSingleton<BlocksManager>.Instance.blocksLibrary;
-            var ElementBlocksField = AccessTools.Field(typeof(BlocksLibrary), "ElementBlocks");
-            var ElementBlocks = (BlockData[])ElementBlocksField.GetValue(lib);
-            BaseElementBlocks = ElementBlocks.ToDictionary(v => (long)v.blockId, v => v);
-            var modifiedElementsBlocks = ElementBlocks.Where(blockData => {
-                var ShowInCompendiumField = AccessTools.Field(typeof(BlockData), "ShowInCompendium");
-                var ShowInCompendium = (bool)ShowInCompendiumField.GetValue(blockData);
-                return Plugin.UnlockedItemIds.Contains(blockData.blockId) || !ShowInCompendium;
-            }).ToArray();
-            ElementBlocksField.SetValue(lib, modifiedElementsBlocks);
+            var ShowInCompendiumField = AccessTools.Field(typeof(BlockData), "ShowInCompendium");
+            var ShowInCompendium = (bool)ShowInCompendiumField.GetValue(blockData);
+            return Plugin.UnlockedItemIds.Contains(blockData.blockId) || !ShowInCompendium;
+        }).ToArray();
+        ElementBlocksField.SetValue(lib, modifiedElementsBlocks);
+        ProgressManager progressManager = AbstractSingleton<ProgressManager>.Instance;
+        // var blocksProgressField = AccessTools.Field(typeof(ProgressManager), "blocksProgress");
+        // var blocksProgress = (SortedDictionary<int, BlockProgress>)blocksProgressField.GetValue(progressManager);
+        // blocksProgress.Clear();
+            
+    }
 
-            Plugin.didInitRecipes = true;
+    static void InitIcons()
+    {
+        var moneyIcon = GameObject.Find("UI/HUD/Currencies/Money/Badge/Icon");
+        var manaIcon = GameObject.Find("UI/HUD/Currencies/Mana/Badge/Icon");
+        var lazyIcon = GameObject.Find("UI/HUD/Objective menu button/Content/Lazy");
+        EditModeMenuPatch.MoneySprite = moneyIcon.GetComponent<UnityEngine.UI.Image>().sprite;
+        EditModeMenuPatch.ManaSprite = manaIcon.GetComponent<UnityEngine.UI.Image>().sprite;
+        EditModeMenuPatch.StarPowerSprite = lazyIcon.GetComponentInChildren<UnityEngine.UI.Image>().sprite;
 
+        var bytes = File.ReadAllBytes("BepInEx/plugins/FakutoriArchipelago/color-icon.png");
+        var tex = new Texture2D(2, 2);
+        tex.LoadImage(bytes);
+        EditModeMenuPatch.ArchipelagoSprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
 
+        bytes = File.ReadAllBytes("BepInEx/plugins/FakutoriArchipelago/white-icon.png");
+        tex = new Texture2D(2, 2);
+        tex.LoadImage(bytes);
+        EditModeMenuPatch.ArchipelagoWhiteSprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
 
-        }
+        bytes = File.ReadAllBytes("BepInEx/plugins/FakutoriArchipelago/icon.png");
+        tex = new Texture2D(2, 2);
+        tex.LoadImage(bytes);
+        EditModeMenuPatch.ArchipelagoSDFSprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
+    }
 
-        if (!Plugin.didInitShop && ArchipelagoClient.Authenticated)
-        {
-            var moneyIcon = GameObject.Find("UI/HUD/Currencies/Money/Badge/Icon");
-            var manaIcon = GameObject.Find("UI/HUD/Currencies/Mana/Badge/Icon");
-            var lazyIcon = GameObject.Find("UI/HUD/Objective menu button/Content/Lazy");
-            EditModeMenuPatch.MoneySprite = moneyIcon.GetComponent<UnityEngine.UI.Image>().sprite;
-            EditModeMenuPatch.ManaSprite = manaIcon.GetComponent<UnityEngine.UI.Image>().sprite;
-            EditModeMenuPatch.StarPowerSprite = lazyIcon.GetComponentInChildren<UnityEngine.UI.Image>().sprite;
-
-            var bytes = File.ReadAllBytes("BepInEx/plugins/FakutoriArchipelago/color-icon.png");
-            var tex = new Texture2D(2,2);
-            tex.LoadImage(bytes);
-            EditModeMenuPatch.ArchipelagoSprite = Sprite.Create(tex,new Rect(0,0,tex.width,tex.height),new Vector2(0.5f,0.5f));
-
-            bytes = File.ReadAllBytes("BepInEx/plugins/FakutoriArchipelago/white-icon.png");
-            tex = new Texture2D(2,2);
-            tex.LoadImage(bytes);
-            EditModeMenuPatch.ArchipelagoWhiteSprite = Sprite.Create(tex,new Rect(0,0,tex.width,tex.height),new Vector2(0.5f,0.5f));
-
-            bytes = File.ReadAllBytes("BepInEx/plugins/FakutoriArchipelago/black-icon.png");
-            tex = new Texture2D(2,2);
-            tex.LoadImage(bytes);
-            EditModeMenuPatch.ArchipelagoBlackSprite = Sprite.Create(tex,new Rect(0,0,tex.width,tex.height),new Vector2(0.5f,0.5f));
-
-            //Populate the shop
-            List<string> shopLocationNames = new List<string>() {
+    static void InitShop()
+    {
+        //Populate the shop
+        ShopLocations.Clear();
+        List<string> shopLocationNames = new List<string>() {
                 "Disassembler",
                 "Puller",
                 "Pusher",
@@ -931,61 +1047,114 @@ internal class ProgressManagerPatch
                 "Cross conveyor",
             };
 
-            var extraShopChecks = (long)ArchipelagoClient.ServerData.slotData["extra_shop_checks"];
-            for (int i = 0; i < extraShopChecks; i++)
+        var extraShopChecks = (long)ArchipelagoClient.ServerData.slotData["extra_shop_checks"];
+        for (int i = 0; i < extraShopChecks; i++)
+        {
+            shopLocationNames.Add($"Extra shop {i + 1}");
+        }
+
+        var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
+        var MachineBlocksField = AccessTools.Field(typeof(BlocksLibrary), "MachineBlocks");
+        var MachineBlocks = (BlockData[])MachineBlocksField.GetValue(lib);
+
+        var shopLocationIds = new List<long>();
+
+        shopLocationIds = shopLocationNames.Select(name =>
+            ArchipelagoClient.session.Locations.GetLocationIdFromName("Fakutori", name)
+        )
+        .ToList();
+
+        Plugin.BepinLogger.LogInfo($"Scouting shop locations with ids: {string.Join(", ", shopLocationIds)}");
+
+        int unlockCost = 2000;
+
+        ArchipelagoClient.session.Locations.ScoutLocationsAsync(shopLocationIds.ToArray()).ContinueWith(task =>
+        {
+            if (task.IsCompletedSuccessfully)
             {
-                shopLocationNames.Add($"Extra shop {i + 1}");
-            }
-
-            var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
-            var MachineBlocksField = AccessTools.Field(typeof(BlocksLibrary), "MachineBlocks");
-            var MachineBlocks = (BlockData[])MachineBlocksField.GetValue(lib);
-
-            var shopLocationIds = new List<long>();
-
-            shopLocationIds = shopLocationNames.Select(name =>
-                ArchipelagoClient.session.Locations.GetLocationIdFromName("Fakutori", name)
-            )
-            .ToList();
-
-            Plugin.BepinLogger.LogInfo($"Scouting shop locations with ids: {string.Join(", ", shopLocationIds)}");
-
-            int unlockCost = 2000;
-
-            ArchipelagoClient.session.Locations.ScoutLocationsAsync(shopLocationIds.ToArray()).ContinueWith(task =>
-            {
-                if (task.IsCompletedSuccessfully)
+                var result = task.Result;
+                foreach (var pair in result)
                 {
-                    Plugin.BepinLogger.LogInfo($"Successfully scouted shop locations:");
-                    var result = task.Result;
-                    foreach (var pair in result)
-                    {
-                        long id = pair.Key;
-                        ItemInfo itemInfo = pair.Value;
+                    long id = pair.Key;
+                    ItemInfo itemInfo = pair.Value;
 
-                        Plugin.BepinLogger.LogInfo($" - {id}: {itemInfo.ItemName}");
-                        ShopLocations[id] = itemInfo;
-                        BlockUnlockCosts.TryAdd(itemInfo.LocationId, unlockCost);
-                    }
+                    ShopLocations[id] = itemInfo;
+                    BlockUnlockCosts.TryAdd(itemInfo.LocationId, unlockCost);
+                }
+
+                try
+                {
 
                     // Apply shop reduction
                     double shopPriceReductionPercent = ((long)ArchipelagoClient.ServerData.slotData["shop_price"]) / 100.0;
-                    foreach (var kv in BlockUnlockCosts)
+                    foreach (var k in BlockUnlockCosts.Keys.ToList())
                     {
-                        long locationId = kv.Key;
-                        int originalCost = kv.Value;
+                        long locationId = k;
+                        int originalCost = BlockUnlockCosts[k];
                         int reducedCost = (int)(originalCost * shopPriceReductionPercent);
                         BlockUnlockCosts[locationId] = reducedCost;
-                        Plugin.BepinLogger.LogInfo($"Applying shop price reduction for location {locationId}: {originalCost} -> {reducedCost}");
                     }
                 }
-                else
+                catch (Exception ex)
                 {
-                    Plugin.BepinLogger.LogError($"Failed to scout locations");
+                    Plugin.BepinLogger.LogError(ex.Message);
+                    throw;
                 }
-            });
+            }
+            else
+            {
+                Plugin.BepinLogger.LogError($"Failed to scout locations");
+            }
+        });
+    }
 
+    static void InitUnlocks()
+    {
+        bool startWithDisassembler = ((long)ArchipelagoClient.ServerData.slotData["start_with_disassembler"]) == 1;
+        bool startWithBaseMachines = ((long)ArchipelagoClient.ServerData.slotData["start_with_base_machines"]) == 1;
 
+        if (startWithBaseMachines)
+        {
+            // Generators
+            Plugin.UnlockedItemIds.Add(100);
+            Plugin.UnlockedItemIds.Add(1);
+            Plugin.UnlockedItemIds.Add(2);
+            Plugin.UnlockedItemIds.Add(3);
+
+            // Wall
+            Plugin.UnlockedItemIds.Add(6);
+            // Conveyor
+            Plugin.UnlockedItemIds.Add(7);
+            // Combiner
+            Plugin.UnlockedItemIds.Add(4);
+        }
+
+        if (startWithDisassembler)
+        {
+            Plugin.UnlockedItemIds.Add(5);
+        }
+    }
+
+    static void OnGameTick()
+    {
+        if (!Plugin.didInitUnlocks && ArchipelagoClient.Authenticated)
+        {
+            InitUnlocks();
+            Plugin.didInitUnlocks = true;
+        }
+        if (!Plugin.didInitRecipes && ArchipelagoClient.Authenticated)
+        {
+            InitRecipes();
+            Plugin.didInitRecipes = true;
+        }
+        if (!Plugin.didInitIcons && ArchipelagoClient.Authenticated)
+        {
+            InitIcons();
+            Plugin.didInitIcons = true;
+        }
+        if (!Plugin.didInitShop && ArchipelagoClient.Authenticated)
+        {
+            InitShop();
             Plugin.didInitShop = true;
         }
 
@@ -1020,7 +1189,7 @@ internal class ProgressManagerPatch
 
             BlockIdField.SetValue(customBlockData, customId);
             UISpriteField.SetValue(customBlockData, EditModeMenuPatch.ArchipelagoSprite);
-            IconField.SetValue(customBlockData, EditModeMenuPatch.ArchipelagoBlackSprite);
+            IconField.SetValue(customBlockData, EditModeMenuPatch.ArchipelagoSDFSprite);
             NameKeyField.SetValue(customBlockData, $"custom_{sentItemInfo.Item.ItemDisplayName} ({sentItemInfo.Item.ItemGame})");
 
             BlocksLibraryPatch.CustomBlockData[customId] = customBlockData;
@@ -1037,8 +1206,10 @@ internal class ProgressManagerPatch
         {
             bool isFiller = itemInfo.ItemId >= 1000;
 
+            bool unlockSilently = Plugin.UnlockedItemIds.Contains(itemInfo.ItemId);
 
-            if (!isFiller)
+
+            if (!isFiller && !unlockSilently)
             {
                 Plugin.UnlockedItemIds.Add(itemInfo.ItemId);
             }
@@ -1066,7 +1237,8 @@ internal class ProgressManagerPatch
                     // Gain full starpower
                     var StarShowerManager = AbstractSingleton<StarShowerManager>.Instance;
                     StarShowerManager.FillGauge();
-                } else
+                }
+                else
                 {
                     Plugin.BepinLogger.LogWarning($"Received unknown filler item with id {itemInfo.ItemId}");
                 }
@@ -1080,7 +1252,7 @@ internal class ProgressManagerPatch
                 //It must be a machine block.
                 var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
                 var machineBlockData = lib.GetBlockDataById((int)itemInfo.ItemId);
-                ApplyUnlock(machineBlockData, itemInfo);
+                ApplyUnlock(machineBlockData, itemInfo, unlockSilently);
             }
 
         }

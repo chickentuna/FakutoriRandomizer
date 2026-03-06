@@ -120,6 +120,7 @@ public class ArchipelagoClient
             outText = $"Successfully connected to {ServerData.Uri} as {ServerData.SlotName}!";
 
             ArchipelagoConsole.LogMessage(outText);
+            Plugin.OnAuthenticated();
         }
         else
         {
