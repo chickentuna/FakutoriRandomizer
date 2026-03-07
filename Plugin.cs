@@ -49,6 +49,44 @@ public class Plugin : BaseUnityPlugin
     public static List<long> UnlockedItemIds = new();
     public static List<long> BlockIdsThatAreNotLocations = new();
 
+    public static class ArchipelagoSaveHelper
+    {
+        public static int ReadLastAppliedIndex(string saveFilePath)
+        {
+            string indexPath = saveFilePath + ".apindex";
+
+            if (!File.Exists(indexPath))
+                return 0; // New game or first AP session
+
+            try
+            {
+                string content = File.ReadAllText(indexPath).Trim();
+                return int.Parse(content);
+            }
+            catch
+            {
+                // Corrupted file or parse error, treat as new
+                return 0;
+            }
+        }
+
+        public static void WriteLastAppliedIndex(string saveFilePath, int index)
+        {
+            string indexPath = saveFilePath + ".apindex";
+
+            try
+            {
+                File.WriteAllText(indexPath, index.ToString());
+            }
+            catch
+            {
+                // Failed to write, but don't crash the game
+                // Next load will re-apply everything (safe fallback)
+            }
+        }
+    }
+
+
     public static void AddToPendingSentItems(ItemInfo item, PlayerInfo recipient)
     {
         if (recipient.Name == ArchipelagoClient.ServerData.SlotName)
@@ -152,7 +190,7 @@ public class Plugin : BaseUnityPlugin
                 {
                     return;
                 }
-                
+
             }
             ArchipelagoClient.session.SetGoalAchieved();
         }
@@ -320,7 +358,7 @@ class EditModeMenuPatch
                         continue;
                     }
 
-                    BlockData blockForSale = ProgressManagerPatch.ElementBlocksById[itemInfo.ItemId];
+                    BlockData blockForSale = lib.GetBlockDataById((int)itemInfo.ItemId);
                     var unlockCostField = AccessTools.Field(typeof(BlockData), "UnlockCost");
                     unlockCostField.SetValue(blockForSale, ProgressManagerPatch.BlockUnlockCosts[shoplocationId]);
                     toAddToShop.Add(itemInfo);
@@ -424,7 +462,7 @@ class EditModeMenuPatch
             }
             else
             {
-                blockForSale = ProgressManagerPatch.ElementBlocksById[itemInfo.ItemId];
+                blockForSale = lib.GetBlockDataById((int)itemInfo.ItemId);
                 sprite = ProgressManagerPatch.BlockSprites[blockForSale.blockId];
             }
 
@@ -758,6 +796,8 @@ class GameplayManagerPatch
         }
     }
 
+    //TODO: save and load ap index
+
     [HarmonyPatch("LoadGame")]
     [HarmonyPostfix]
     static void PostLoadGame(GameplayManager __instance)
@@ -858,6 +898,8 @@ internal class ProgressManagerPatch
         var go = new GameObject("ArchipelagoUI");
         var ui = go.AddComponent<ArchipelagoUI>();
 
+        //TODO: rebuild UI using the sam lib as unity explorer
+
         ui.Init();
         AbstractSingleton<TimeManager>.Instance.OnTick.AddListener(ui.OnTick);
 
@@ -906,7 +948,7 @@ internal class ProgressManagerPatch
         Plugin.BepinLogger.LogInfo($"Element blocks count in lib: {ElementBlocks.Length}");
     }
 
-    //TODO: some elements aren't marked as unlockable even when they are.
+    //TODO: some elements aren't marked as not unlockable even when they are.
     public static void ApplyUnlock(BlockData blockData, ItemInfo itemInfo, bool unlockSilently = false)
     {
         ProgressManager progressManager = AbstractSingleton<ProgressManager>.Instance;
@@ -955,21 +997,7 @@ internal class ProgressManagerPatch
         {
             if (!unlockSilently)
             {
-                // Insert a special custom block data that will be picked up by the notification when doing getblockdatabyid
-                int count = BlocksLibraryPatch.CustomBlockData.Count();
-                int customId = -(count + 1);
-                var customBlockData = ScriptableObject.Instantiate(blockData);
-
-                var BlockIdField = AccessTools.Field(typeof(BlockData), "BlockId");
-                BlockIdField.SetValue(customBlockData, customId);
-
-                BlocksLibraryPatch.CustomBlockData[customId] = customBlockData;
-                BlocksLibraryPatch.CustomBlockDataItemInfo[customId] = itemInfo;
-                BlocksLibraryPatch.CustomBlockDataOriginal[customId] = blockData;
-
-                NotificationsPatch.AllowQueueNotification = true;
-                AbstractSingleton<Notifications>.Instance.QueueNotification(NotificationType.NewBlock, customBlockData, null);
-                NotificationsPatch.AllowQueueNotification = false;
+                SendItemReceivedNotification(blockData, itemInfo);
             }
             AbstractSingleton<ProgressManager>.Instance.UnlockMachine(blockData);
             Plugin.BepinLogger.LogInfo($"Unlocked machine block {blockData.blockName}");
@@ -1119,6 +1147,8 @@ internal class ProgressManagerPatch
         }
     }
 
+
+
     static void OnGameTick()
     {
         if (!Plugin.didInitUnlocks && ArchipelagoClient.Authenticated)
@@ -1205,7 +1235,6 @@ internal class ProgressManagerPatch
             }
 
 
-
             if (!isFiller && !unlockSilently)
             {
                 Plugin.UnlockedItemIds.Add(itemInfo.ItemId);
@@ -1214,48 +1243,46 @@ internal class ProgressManagerPatch
             if (isFiller)
             {
                 CurrencyManager currencyManager = AbstractSingleton<CurrencyManager>.Instance;
+                Sprite sprite = null;
                 if (itemInfo.ItemId == 1000)
                 {
                     // Gain 500 gold
                     currencyManager.AddMoney(500);
+                    sprite = EditModeMenuPatch.MoneySprite;
                 }
                 else if (itemInfo.ItemId == 1001)
                 {
                     // Gain 1000 gold
                     currencyManager.AddMoney(1000);
+                    sprite = EditModeMenuPatch.MoneySprite;
                 }
                 else if (itemInfo.ItemId == 1002)
                 {
                     // Gain 500 mana
                     currencyManager.AddMana(null, null, 500);
+                    sprite = EditModeMenuPatch.ManaSprite;
                 }
                 else if (itemInfo.ItemId == 1003)
                 {
                     // Gain full starpower
                     var StarShowerManager = AbstractSingleton<StarShowerManager>.Instance;
                     StarShowerManager.FillGauge();
+                    sprite = EditModeMenuPatch.StarPowerSprite;
                 }
                 else
                 {
                     Plugin.BepinLogger.LogWarning($"Received unknown filler item with id {itemInfo.ItemId}");
                 }
-                
-                //TODO: custom block data. You might wanna refactor here.
-                    //int count = BlocksLibraryPatch.CustomBlockData.Count();
-                    //int customId = -(count + 1);
-                    //var customBlockData = ScriptableObject.Instantiate(blockData);
 
-                    //var BlockIdField = AccessTools.Field(typeof(BlockData), "BlockId");
-                    //BlockIdField.SetValue(customBlockData, customId);
+                BlockData blockData = ScriptableObject.CreateInstance<BlockData>();
+                var BlockIdField = AccessTools.Field(typeof(BlockData), "BlockId");
+                var UISpriteField = AccessTools.Field(typeof(BlockData), "UISprite");
+                var IconField = AccessTools.Field(typeof(BlockData), "Icon");
+                BlockIdField.SetValue(blockData, (int)itemInfo.ItemId);
+                UISpriteField.SetValue(blockData, sprite);
+                IconField.SetValue(blockData, EditModeMenuPatch.ArchipelagoSDFSprite);
+                SendItemReceivedNotification(blockData, itemInfo, itemInfo.ItemDisplayName);
 
-                    //BlocksLibraryPatch.CustomBlockData[customId] = customBlockData;
-                    //BlocksLibraryPatch.CustomBlockDataItemInfo[customId] = itemInfo;
-                    //BlocksLibraryPatch.CustomBlockDataOriginal[customId] = blockData;
-
-                    //NotificationsPatch.AllowQueueNotification = true;
-                    //AbstractSingleton<Notifications>.Instance.QueueNotification(NotificationType.NewBlock, customBlockData, null);
-                    //NotificationsPatch.AllowQueueNotification = false;
-                
             }
             else if (ElementBlocksById.TryGetValue(itemInfo.ItemId, out BlockData blockData))
             {
@@ -1272,6 +1299,30 @@ internal class ProgressManagerPatch
 
         }
 
+    }
+
+    static void SendItemReceivedNotification(BlockData blockData, ItemInfo itemInfo, string unlockText = null)
+    {
+        int count = BlocksLibraryPatch.CustomBlockData.Count();
+        int customId = -(count + 1);
+        var customBlockData = ScriptableObject.Instantiate(blockData);
+
+        var BlockIdField = AccessTools.Field(typeof(BlockData), "BlockId");
+        BlockIdField.SetValue(customBlockData, customId);
+
+        if (unlockText != null)
+        {
+            var NameKeyField = AccessTools.Field(typeof(BlockData), "NameKey");
+            NameKeyField.SetValue(customBlockData, $"custom_{unlockText}");
+        }
+
+        BlocksLibraryPatch.CustomBlockData[customId] = customBlockData;
+        BlocksLibraryPatch.CustomBlockDataItemInfo[customId] = itemInfo;
+        BlocksLibraryPatch.CustomBlockDataOriginal[customId] = blockData;
+
+        NotificationsPatch.AllowQueueNotification = true;
+        AbstractSingleton<Notifications>.Instance.QueueNotification(NotificationType.NewBlock, customBlockData, null);
+        NotificationsPatch.AllowQueueNotification = false;
     }
 
 }
