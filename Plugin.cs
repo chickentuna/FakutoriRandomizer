@@ -279,6 +279,7 @@ class NotificationsPatch
 
 }
 
+
 [HarmonyPatch(typeof(BlockData))]
 class BlockNamePropertyPatch
 {
@@ -824,6 +825,13 @@ internal class ProgressManagerPatch
     public static Dictionary<BlockData, long> ShopLocationIdFromBlockData = new Dictionary<BlockData, long>();
 
     public static Dictionary<long, BlockData> ElementBlocksById = new();
+
+    [HarmonyPatch("BlockChallengeCompleted")]
+    [HarmonyPostfix]
+    static void PostBlockChallengeCompleted(ProgressManager __instance, BlockData blockData, GridCell onCell = null)
+    {
+        //TODO: do a check for this
+    }
 
     [HarmonyPatch("SetItemSeen")]
     [HarmonyPrefix]
