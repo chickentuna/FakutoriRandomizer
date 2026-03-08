@@ -141,18 +141,30 @@ public class ArchipelagoUI : MonoBehaviour
     Button CreateButton(string name, string label, Vector2 pos, Font font)
     {
         var go = new GameObject(name);
-        go.transform.SetParent(root.transform);
+        go.transform.SetParent(root.transform, false);
 
         var image = go.AddComponent<Image>();
-        image.color = Color.white;
+        image.color = Color.white; // you can keep clear if you want invisible
 
         var button = go.AddComponent<Button>();
 
-        var text = CreateText("ButtonText", label, Vector2.zero, font);
+        // Create Text as a proper child of the button
+        var textGO = new GameObject("ButtonText");
+        textGO.transform.SetParent(go.transform, false); // false keeps local position
+        var text = textGO.AddComponent<Text>();
+        text.font = font;
+        text.text = label;
         text.alignment = TextAnchor.MiddleCenter;
-        text.transform.SetParent(go.transform);
         text.color = Color.black;
 
+        // Make text fill the button
+        var textRect = text.GetComponent<RectTransform>();
+        textRect.anchorMin = Vector2.zero;
+        textRect.anchorMax = Vector2.one;
+        textRect.offsetMin = Vector2.zero;
+        textRect.offsetMax = Vector2.zero;
+
+        // Position and size of button itself
         var rect = go.GetComponent<RectTransform>();
         rect.anchorMin = new Vector2(0, 1);
         rect.anchorMax = new Vector2(0, 1);
@@ -162,7 +174,7 @@ public class ArchipelagoUI : MonoBehaviour
 
         return button;
     }
-
+    
     void UpdateUI(bool show)
     {
         if (show)
