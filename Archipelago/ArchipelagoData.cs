@@ -22,8 +22,8 @@ public class ArchipelagoData
 
     public ArchipelagoData()
     {
-        Uri = "localhost:38281";
-        SlotName = "chickentuna";
+        Uri = "archipelago.gg:38281";
+        SlotName = "Player";
     }
 
     public ArchipelagoData(string uri, string slotName, string password)
