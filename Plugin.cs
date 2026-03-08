@@ -49,44 +49,6 @@ public class Plugin : BaseUnityPlugin
     public static List<long> UnlockedItemIds = new();
     public static List<long> BlockIdsThatAreNotLocations = new();
 
-    public static class ArchipelagoSaveHelper
-    {
-        public static int ReadLastAppliedIndex(string saveFilePath)
-        {
-            string indexPath = saveFilePath + ".apindex";
-
-            if (!File.Exists(indexPath))
-                return 0; // New game or first AP session
-
-            try
-            {
-                string content = File.ReadAllText(indexPath).Trim();
-                return int.Parse(content);
-            }
-            catch
-            {
-                // Corrupted file or parse error, treat as new
-                return 0;
-            }
-        }
-
-        public static void WriteLastAppliedIndex(string saveFilePath, int index)
-        {
-            string indexPath = saveFilePath + ".apindex";
-
-            try
-            {
-                File.WriteAllText(indexPath, index.ToString());
-            }
-            catch
-            {
-                // Failed to write, but don't crash the game
-                // Next load will re-apply everything (safe fallback)
-            }
-        }
-    }
-
-
     public static void AddToPendingSentItems(ItemInfo item, PlayerInfo recipient)
     {
         if (recipient.Name == ArchipelagoClient.ServerData.SlotName)
@@ -159,7 +121,7 @@ public class Plugin : BaseUnityPlugin
         BlockIdsThatAreNotLocations.Add(16);
     }
 
-    //TODO: test this (not sure about quartz and quasar
+    //TODO: test this victory condition
     public static void CheckGoal()
     {
         long victoryCondition = (long)ArchipelagoClient.ServerData.slotData["victory_condition"];
@@ -196,6 +158,46 @@ public class Plugin : BaseUnityPlugin
         }
     }
 }
+
+
+public static class ArchipelagoSaveHelper
+{
+    public static int ReadLastAppliedIndex(string saveFilePath)
+    {
+        string indexPath = saveFilePath + ".apindex";
+
+        if (!File.Exists(indexPath))
+            return 0; // New game or first AP session
+
+        try
+        {
+            string content = File.ReadAllText(indexPath).Trim();
+            return int.Parse(content);
+        }
+        catch
+        {
+            // Corrupted file or parse error, treat as new
+            return 0;
+        }
+    }
+
+    public static void WriteLastAppliedIndex(string saveFilePath, int index)
+    {
+        string indexPath = saveFilePath + ".apindex";
+
+        try
+        {
+            File.WriteAllText(indexPath, index.ToString());
+        }
+        catch
+        {
+            // Failed to write, but don't crash the game
+            // Next load will re-apply everything (safe fallback)
+        }
+    }
+}
+
+
 
 [HarmonyPatch(typeof(ElementBlock))]
 class ElementBlockPatch
@@ -780,6 +782,10 @@ class GameplayManagerPatch
 
     static void Reset()
     {
+        BlocksLibraryPatch.CustomBlockData.Clear();
+        BlocksLibraryPatch.CustomBlockDataItemInfo.Clear();
+        BlocksLibraryPatch.CustomBlockDataPlayerName.Clear();
+        Plugin.UnlockedItemIds.Clear();
         Plugin.PendingItems.Clear();
         Plugin.BepinLogger.LogInfo($"Resetting archipelago progress...");
 
@@ -787,22 +793,41 @@ class GameplayManagerPatch
         Plugin.didInitShop = false;
 
         Plugin.BepinLogger.LogInfo($"Pushing history:");
-        foreach (var item in Plugin.ReceivedItemHistory)
+        for (int i = 0; i < Plugin.ReceivedItemHistory.Count; i++)
         {
+            var item = Plugin.ReceivedItemHistory[i];
+
+            if (ArchipelagoClient.ServerData.Index > i && item.ItemId >= 1000)
+            {
+                Plugin.BepinLogger.LogInfo($"   filler id {item.ItemName} (index {i} already applied)");
+                continue;
+            }
             if (!Plugin.UnlockedItemIds.Contains(item.ItemId))
             {
                 Plugin.BepinLogger.LogInfo($"   item: {item.ItemName}");
                 Plugin.PendingItems.Enqueue(item);
             }
         }
+        ArchipelagoClient.ServerData.Index = Plugin.ReceivedItemHistory.Count;
     }
 
-    //TODO: save and load ap index
+    [HarmonyPatch("SaveGame")]
+    [HarmonyPostfix]
+    static void PostSaveGame(GameplayManager __instance, string fileName, string saveName, Texture2D previewTexture, UnityAction callback, bool toVirtualFile)
+    {
+        if (!ArchipelagoClient.Authenticated) return;
+        Plugin.BepinLogger.LogInfo($"Saving game... writing AP index {ArchipelagoClient.ServerData.Index} to {fileName}.apindex");
+        ArchipelagoSaveHelper.WriteLastAppliedIndex(fileName, ArchipelagoClient.ServerData.Index);
+    }
 
     [HarmonyPatch("LoadGame")]
     [HarmonyPostfix]
-    static void PostLoadGame(GameplayManager __instance)
+    static void PostLoadGame(GameplayManager __instance, string fileName, UnityAction callback, bool fromVirtualFile)
     {
+        if (!ArchipelagoClient.Authenticated) return;
+        Plugin.BepinLogger.LogInfo($"Loading game... reading AP index from {fileName}.apindex");
+        int apIndex = ArchipelagoSaveHelper.ReadLastAppliedIndex(fileName);
+        ArchipelagoClient.ServerData.Index = apIndex;
         Reset();
     }
 
@@ -810,6 +835,9 @@ class GameplayManagerPatch
     [HarmonyPostfix]
     static void PostNewGame(GameplayManager __instance)
     {
+        if (!ArchipelagoClient.Authenticated) return;
+        Plugin.BepinLogger.LogInfo($"Starting new game... resetting AP index to 0");
+        ArchipelagoClient.ServerData.Index = 0;
         Reset();
     }
 }
@@ -956,11 +984,9 @@ internal class ProgressManagerPatch
         Plugin.BepinLogger.LogInfo($"Element blocks count in lib: {ElementBlocks.Length}");
     }
 
-    //TODO: some elements aren't marked as not unlockable even when they are.
     public static void ApplyUnlock(BlockData blockData, ItemInfo itemInfo, bool unlockSilently = false)
     {
         ProgressManager progressManager = AbstractSingleton<ProgressManager>.Instance;
-        var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
 
         if (blockData.category.name != "Machine")
         {
@@ -990,6 +1016,7 @@ internal class ProgressManagerPatch
                 AllowOnElementBlockSpawned = true;
                 progressManager.OnElementBlockSpawned(blockData, null);
                 AllowOnElementBlockSpawned = false;
+
             }
 
             if (!unlockSilently)
@@ -1125,8 +1152,6 @@ internal class ProgressManagerPatch
         bool startWithDisassembler = ((long)ArchipelagoClient.ServerData.slotData["start_with_disassembler"]) == 1;
         bool startWithBaseMachines = ((long)ArchipelagoClient.ServerData.slotData["start_with_base_machines"]) == 1;
 
-        Plugin.UnlockedItemIds.Clear();
-
         // Base Elements
         Plugin.UnlockedItemIds.Add(11);
         Plugin.UnlockedItemIds.Add(14);
@@ -1242,8 +1267,7 @@ internal class ProgressManagerPatch
                 }
             }
 
-
-            if (!isFiller && !unlockSilently)
+            if (!isFiller && !Plugin.UnlockedItemIds.Contains(itemInfo.ItemId))
             {
                 Plugin.UnlockedItemIds.Add(itemInfo.ItemId);
             }
@@ -1299,7 +1323,7 @@ internal class ProgressManagerPatch
             }
             else
             {
-                // It's be a machine block.
+                // It's a machine block.
                 var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
                 var machineBlockData = lib.GetBlockDataById((int)itemInfo.ItemId);
                 ApplyUnlock(machineBlockData, itemInfo, unlockSilently);
