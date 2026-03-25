@@ -14,7 +14,7 @@ namespace FakutoriArchipelago.Archipelago;
 
 public class ArchipelagoClient
 {
-    public const string APVersion = "0.6.2";
+    public const string APVersion = "0.6.4";
     private const string Game = "Fakutori";
 
     public static bool Authenticated;
