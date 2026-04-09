@@ -1,4 +1,4 @@
-﻿using BepInEx;
+using BepInEx;
 using HarmonyLib;
 using Newtonsoft.Json;
 using System;
@@ -17,18 +17,21 @@ public class RecipeCollection
 [System.Serializable]
 public class IngredientDump
 {
+    public int blockId;
     public string blockName;
     public int quantity;
     public string ingredientType;
-    public String property;
+    public string property;
 }
 
 [System.Serializable]
 public class RecipeDump
 {
     public string type;
-    public string product;
-    public string byproduct;
+    public int productId;
+    public string productName;
+    public int? byproductId;
+    public string byproductName;
     public bool displayOnly;
 
     public int moneyCost;
@@ -41,48 +44,47 @@ public class RecipeDump
 
 public class RecipeDumper
 {
-
     public static void Do()
     {
-        string path = Path.Combine(Paths.PluginPath, "recipes_dump.txt");
+        string path = Path.Combine(Paths.PluginPath, "recipes_dump.json");
 
         var RecipesField = AccessTools.Field(typeof(BlocksLibrary), "Recipes");
         var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
         var Recipes = (Recipe[])RecipesField.GetValue(lib);
-        RecipeDumper.DumpRecipes(Recipes, path);
+        DumpRecipes(Recipes, path);
     }
 
     public static void DumpRecipes(Recipe[] recipes, string filePath)
     {
-
-        var dumps = recipes.Select(recipe => new RecipeDump
-        {
-            type = recipe.type.ToString(),
-            product = recipe.product?.name,
-            byproduct = recipe.byproduct?.name,
-            displayOnly = recipe.displayOnly,
-
-            moneyCost = recipe.cost.moneyCost,
-            manaCost = recipe.cost.manaCost,
-            timeCost = recipe.cost.timeCost,
-            probability = recipe.cost.probability,
-
-            ingredients = recipe.ingredients?.Select(ing => new IngredientDump
+        var dumps = recipes
+            .Where(recipe => recipe?.product != null)
+            .OrderBy(recipe => recipe.product.blockId)
+            .Select(recipe => new RecipeDump
             {
-                blockName = ing.block?.blockName ?? "NO_BLOCK",
-                quantity = ing.quantity,
-                ingredientType = ing.ingredientType.ToString(),
-                property = ing.property.ToString()
-            }).ToArray()
-        }).ToArray();
+                type = recipe.type.ToString(),
+                productId = recipe.product.blockId,
+                productName = recipe.product.blockName,
+                byproductId = recipe.byproduct?.blockId,
+                byproductName = recipe.byproduct?.blockName,
+                displayOnly = recipe.displayOnly,
 
+                moneyCost = recipe.cost.moneyCost,
+                manaCost = recipe.cost.manaCost,
+                timeCost = recipe.cost.timeCost,
+                probability = recipe.cost.probability,
+
+                ingredients = recipe.ingredients?.Select(ing => new IngredientDump
+                {
+                    blockId = ing.block?.blockId ?? -1,
+                    blockName = ing.block?.blockName ?? "NO_BLOCK",
+                    quantity = ing.quantity,
+                    ingredientType = ing.ingredientType.ToString(),
+                    property = ing.property.ToString()
+                }).ToArray()
+            }).ToArray();
 
         var collection = new RecipeCollection { recipes = dumps };
-        Plugin.BepinLogger.LogInfo(collection.recipes.Length + " recipes dumped.");
-        var json = JsonConvert.SerializeObject(collection, Formatting.Indented);
-        File.WriteAllText(filePath, json);
-
-        //string json = JsonUtility.ToJson(collection, true);
-        //File.WriteAllText(filePath, json);
+        Plugin.BepinLogger.LogInfo($"{collection.recipes.Length} recipes dumped to {filePath}");
+        File.WriteAllText(filePath, JsonConvert.SerializeObject(collection, Formatting.Indented));
     }
 }
