@@ -26,87 +26,30 @@ class EditModeMenuPatch
         var currentLayerField = AccessTools.Field(typeof(EditModeMenu), "currentLayer");
         var currentLayer = (EditModeLayer)currentLayerField.GetValue(__instance);
         if (currentLayer != EditModeLayer.Machines)
-        {
             return;
-        }
 
-
-        // Game has just filled the menu with the standard icons.
         var menuItemsField = AccessTools.Field(typeof(EditModeMenu), "menuItems");
         var menuItems = (List<SelectMenuItem>)menuItemsField.GetValue(__instance);
         var lib = AbstractSingleton<BlocksManager>.Instance.blocksLibrary;
 
-        List<BlockData> machinesToKeepBecauseUnlocked = lib.machineBlocks.Where(blockData =>
-            Plugin.UnlockedItemIds.Contains(blockData.blockId)
-        ).ToList();
+        List<BlockData> unlockedMachines = lib.machineBlocks
+            .Where(bd => Plugin.UnlockedItemIds.Contains(bd.blockId))
+            .ToList();
+        List<ItemInfo> toAddToShop = BuildShopItemList(lib);
 
-        List<ItemInfo> toAddToShop = new List<ItemInfo>();
-        int indexAtWhichToClear = 3;
-
-        foreach (var kv in ProgressManagerPatch.ShopLocations)
+        // Remove everything past the first 3 entries (eraser/move/select stay)
+        for (int i = menuItems.Count - 1; i >= 3; i--)
         {
-            long shoplocationId = kv.Key;
-
-            ItemInfo itemInfo = kv.Value;
-
-            // If location hasn't been checked, will need to go back into shop
-            if (!ArchipelagoClient.session.Locations.AllLocationsChecked.Contains(shoplocationId))
-            {
-                if (itemInfo.Player.Name == ArchipelagoClient.ServerData.SlotName)
-                {
-
-                    // Handle items 100X (filler items)
-                    if (itemInfo.ItemId >= Constants.Filler500GoldItemId)
-                    {
-                        toAddToShop.Add(itemInfo);
-                        continue;
-                    }
-
-                    // Skip the item if already owned
-                    // if (Plugin.UnlockedItemIds.Contains(shoplocationId))
-                    if (Plugin.UnlockedItemIds.Contains(itemInfo.ItemId))
-                    {
-                        continue;
-                    }
-
-                    BlockData blockForSale = lib.GetBlockDataById((int)itemInfo.ItemId);
-                    var unlockCostField = AccessTools.Field(typeof(BlockData), "UnlockCost");
-                    unlockCostField.SetValue(blockForSale, ProgressManagerPatch.BlockUnlockCosts[shoplocationId]);
-                    toAddToShop.Add(itemInfo);
-                }
-                else
-                {
-                    toAddToShop.Add(itemInfo);
-                }
-
-            }
-        }
-
-
-        // Remove everything from the shop
-        if (indexAtWhichToClear != -1)
-        {
-            for (int i = menuItems.Count - 1; i >= indexAtWhichToClear; i--)
-            {
-                UnityEngine.Object.Destroy(menuItems[i].gameObject);
-                menuItems.RemoveAt(i);
-            }
+            UnityEngine.Object.Destroy(menuItems[i].gameObject);
+            menuItems.RemoveAt(i);
         }
 
         var AddItemMethod = AccessTools.Method(typeof(EditModeMenu), "AddItem",
-            new Type[] {
-                    typeof(Sprite),      // uiSprite
-                    typeof(string),      // name
-                    typeof(string),      // price
-                    typeof(bool),        // showShadow
-                    typeof(SelectionTool), // tool (base class of UnlockMachineBlockTool)
-                    typeof(bool),        // isLocked
-                    typeof(int)          // atIndex
-            }
+            new Type[] { typeof(Sprite), typeof(string), typeof(string), typeof(bool), typeof(SelectionTool), typeof(bool), typeof(int) }
         );
 
-        // Put unlocked machines back into the menu
-        foreach (BlockData blockData in machinesToKeepBecauseUnlocked)
+        // Put already-unlocked machines back in (not locked)
+        foreach (BlockData blockData in unlockedMachines)
         {
             AddItemMethod.Invoke(__instance, new object[] {
                 ProgressManagerPatch.BlockSprites[blockData.blockId],
@@ -116,69 +59,14 @@ class EditModeMenuPatch
                 new PlaceMachineBlockTool(blockData) as SelectionTool,
                 false,
                 -1
-
             });
         }
 
-        // Put buyable things into the menu
+        // Add buyable shop items (shown as locked/purchasable)
         foreach (ItemInfo itemInfo in toAddToShop)
         {
-            BlockData blockForSale = null;
-
-            /*
-                item_name_to_id["500 gold"] = 1000
-                item_name_to_id["1000 gold"] = 1001
-                item_name_to_id["500 mana"] = 1002
-                item_name_to_id["Full starpower"] = 1003
-            */
-            var BlockIdField = AccessTools.Field(typeof(BlockData), "BlockId");
-            var NameKeyField = AccessTools.Field(typeof(BlockData), "NameKey");
-            var UnlockCostField = AccessTools.Field(typeof(BlockData), "UnlockCost");
-            Sprite sprite = null;
-            if (itemInfo.Player.Name != ArchipelagoClient.ServerData.SlotName)
-            {
-                // Remote item
-                blockForSale = ScriptableObject.CreateInstance<BlockData>();
-                BlockIdField.SetValue(blockForSale, (int)itemInfo.ItemId);
-                UnlockCostField.SetValue(blockForSale, ProgressManagerPatch.BlockUnlockCosts[itemInfo.LocationId]);
-                NameKeyField.SetValue(blockForSale, $"custom_{itemInfo.ItemDisplayName} ({itemInfo.Player.Name})");
-                sprite = ArchipelagoSprite;
-
-            }
-            else if (itemInfo.ItemId >= Constants.Filler500GoldItemId)
-            {
-                blockForSale = ScriptableObject.CreateInstance<BlockData>();
-                BlockIdField.SetValue(blockForSale, (int)itemInfo.ItemId);
-                UnlockCostField.SetValue(blockForSale, ProgressManagerPatch.BlockUnlockCosts[itemInfo.LocationId]);
-                if (itemInfo.ItemId == Constants.Filler500GoldItemId)
-                {
-                    NameKeyField.SetValue(blockForSale, $"custom_500 gold");
-                    sprite = MoneySprite;
-                }
-                else if (itemInfo.ItemId == Constants.Filler1000GoldItemId)
-                {
-                    NameKeyField.SetValue(blockForSale, $"custom_1000 gold");
-                    sprite = MoneySprite;
-                }
-                else if (itemInfo.ItemId == Constants.Filler500ManaItemId)
-                {
-                    NameKeyField.SetValue(blockForSale, $"custom_500 mana");
-                    sprite = ManaSprite;
-                }
-                else if (itemInfo.ItemId == Constants.FillerFullStarpowerItemId)
-                {
-                    NameKeyField.SetValue(blockForSale, $"custom_Full starpower");
-                    sprite = StarPowerSprite;
-                }
-            }
-            else
-            {
-                blockForSale = lib.GetBlockDataById((int)itemInfo.ItemId);
-                sprite = ProgressManagerPatch.BlockSprites[blockForSale.blockId];
-            }
-
+            var (blockForSale, sprite) = CreateShopBlockData(itemInfo, lib);
             SelectionTool selectionTool = new UnlockMachineBlockTool(blockForSale);
-
             ProgressManagerPatch.ShopLocationIdFromBlockData.TryAdd(blockForSale, itemInfo.LocationId);
 
             AddItemMethod.Invoke(__instance, new object[] {
@@ -190,9 +78,86 @@ class EditModeMenuPatch
                 true,
                 -1
             });
-
-
         }
+    }
+
+    // Determine which AP shop locations are still unchecked and should appear as buyable items.
+    static List<ItemInfo> BuildShopItemList(BlocksLibrary lib)
+    {
+        var toAddToShop = new List<ItemInfo>();
+
+        foreach (var kv in ProgressManagerPatch.ShopLocations)
+        {
+            long shoplocationId = kv.Key;
+            ItemInfo itemInfo = kv.Value;
+
+            if (ArchipelagoClient.session.Locations.AllLocationsChecked.Contains(shoplocationId))
+                continue;
+
+            if (itemInfo.Player.Name == ArchipelagoClient.ServerData.SlotName)
+            {
+                // Filler items always go in the shop
+                if (itemInfo.ItemId >= Constants.Filler500GoldItemId)
+                {
+                    toAddToShop.Add(itemInfo);
+                    continue;
+                }
+
+                // Skip blocks already owned
+                if (Plugin.UnlockedItemIds.Contains(itemInfo.ItemId))
+                    continue;
+
+                BlockData blockForSale = lib.GetBlockDataById((int)itemInfo.ItemId);
+                var unlockCostField = AccessTools.Field(typeof(BlockData), "UnlockCost");
+                unlockCostField.SetValue(blockForSale, ProgressManagerPatch.BlockUnlockCosts[shoplocationId]);
+                toAddToShop.Add(itemInfo);
+            }
+            else
+            {
+                toAddToShop.Add(itemInfo);
+            }
+        }
+
+        return toAddToShop;
+    }
+
+    // Build the BlockData and icon sprite for a single shop slot.
+    // Handles three cases: remote item (another player's world), filler item, or a local block.
+    static (BlockData blockForSale, Sprite sprite) CreateShopBlockData(ItemInfo itemInfo, BlocksLibrary lib)
+    {
+        var BlockIdField = AccessTools.Field(typeof(BlockData), "BlockId");
+        var NameKeyField = AccessTools.Field(typeof(BlockData), "NameKey");
+        var UnlockCostField = AccessTools.Field(typeof(BlockData), "UnlockCost");
+
+        if (itemInfo.Player.Name != ArchipelagoClient.ServerData.SlotName)
+        {
+            // Item belongs to another player's world — show with AP icon
+            var block = ScriptableObject.CreateInstance<BlockData>();
+            BlockIdField.SetValue(block, (int)itemInfo.ItemId);
+            UnlockCostField.SetValue(block, ProgressManagerPatch.BlockUnlockCosts[itemInfo.LocationId]);
+            NameKeyField.SetValue(block, $"custom_{itemInfo.ItemDisplayName} ({itemInfo.Player.Name})");
+            return (block, ArchipelagoSprite);
+        }
+
+        if (itemInfo.ItemId >= Constants.Filler500GoldItemId)
+        {
+            // Filler item — currency/resource reward
+            var block = ScriptableObject.CreateInstance<BlockData>();
+            BlockIdField.SetValue(block, (int)itemInfo.ItemId);
+            UnlockCostField.SetValue(block, ProgressManagerPatch.BlockUnlockCosts[itemInfo.LocationId]);
+
+            Sprite sprite = null;
+            if (itemInfo.ItemId == Constants.Filler500GoldItemId)      { NameKeyField.SetValue(block, "custom_500 gold");        sprite = MoneySprite; }
+            else if (itemInfo.ItemId == Constants.Filler1000GoldItemId) { NameKeyField.SetValue(block, "custom_1000 gold");       sprite = MoneySprite; }
+            else if (itemInfo.ItemId == Constants.Filler500ManaItemId)  { NameKeyField.SetValue(block, "custom_500 mana");        sprite = ManaSprite; }
+            else if (itemInfo.ItemId == Constants.FillerFullStarpowerItemId) { NameKeyField.SetValue(block, "custom_Full starpower"); sprite = StarPowerSprite; }
+
+            return (block, sprite);
+        }
+
+        // Local block for this player's world
+        var localBlock = lib.GetBlockDataById((int)itemInfo.ItemId);
+        return (localBlock, ProgressManagerPatch.BlockSprites[localBlock.blockId]);
     }
 
     [HarmonyPatch("UnlockMachineAtIndex")]

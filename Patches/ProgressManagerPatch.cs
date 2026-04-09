@@ -211,6 +211,14 @@ internal class ProgressManagerPatch
         return;
     }
 
+    static Sprite LoadSprite(string filename)
+    {
+        var bytes = File.ReadAllBytes($"BepInEx/plugins/FakutoriArchipelago/{filename}");
+        var tex = new Texture2D(2, 2);
+        tex.LoadImage(bytes);
+        return Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
+    }
+
     static void InitIcons()
     {
         var moneyIcon = GameObject.Find("UI/HUD/Currencies/Money/Badge/Icon");
@@ -220,51 +228,40 @@ internal class ProgressManagerPatch
         EditModeMenuPatch.ManaSprite = manaIcon.GetComponent<Image>().sprite;
         EditModeMenuPatch.StarPowerSprite = lazyIcon.GetComponentInChildren<Image>().sprite;
 
-        var bytes = File.ReadAllBytes("BepInEx/plugins/FakutoriArchipelago/color-icon.png");
-        var tex = new Texture2D(2, 2);
-        tex.LoadImage(bytes);
-        EditModeMenuPatch.ArchipelagoSprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
-
-        bytes = File.ReadAllBytes("BepInEx/plugins/FakutoriArchipelago/white-icon.png");
-        tex = new Texture2D(2, 2);
-        tex.LoadImage(bytes);
-        EditModeMenuPatch.ArchipelagoWhiteSprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
-
-        bytes = File.ReadAllBytes("BepInEx/plugins/FakutoriArchipelago/icon.png");
-        tex = new Texture2D(2, 2);
-        tex.LoadImage(bytes);
-        EditModeMenuPatch.ArchipelagoSDFSprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
+        EditModeMenuPatch.ArchipelagoSprite = LoadSprite("color-icon.png");
+        EditModeMenuPatch.ArchipelagoWhiteSprite = LoadSprite("white-icon.png");
+        EditModeMenuPatch.ArchipelagoSDFSprite = LoadSprite("icon.png");
     }
 
-    static void InitShop()
+    static List<string> GetShopLocationNames()
     {
-        //Populate the shop
-        ShopLocations.Clear();
-        BlockUnlockCosts.Clear();
-        List<string> shopLocationNames = new List<string>() {
-                "Disassembler",
-                "Puller",
-                "Pusher",
-                "Conveyor alternate",
-                "Cross conveyor",
-            };
+        var names = new List<string>
+        {
+            "Disassembler",
+            "Puller",
+            "Pusher",
+            "Conveyor alternate",
+            "Cross conveyor",
+        };
 
         var extraShopChecks = (long)ArchipelagoClient.ServerData.slotData["extra_shop_checks"];
         for (int i = 0; i < extraShopChecks; i++)
         {
-            shopLocationNames.Add($"Extra shop {i + 1}");
+            names.Add($"Extra shop {i + 1}");
         }
 
-        var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
-        var MachineBlocksField = AccessTools.Field(typeof(BlocksLibrary), "MachineBlocks");
-        var MachineBlocks = (BlockData[])MachineBlocksField.GetValue(lib);
+        return names;
+    }
 
-        var shopLocationIds = new List<long>();
+    static void InitShop()
+    {
+        ShopLocations.Clear();
+        BlockUnlockCosts.Clear();
 
-        shopLocationIds = shopLocationNames.Select(name =>
-            ArchipelagoClient.session.Locations.GetLocationIdFromName("Fakutori", name)
-        )
-        .ToList();
+        var shopLocationNames = GetShopLocationNames();
+        var shopLocationIds = shopLocationNames
+            .Select(name => ArchipelagoClient.session.Locations.GetLocationIdFromName("Fakutori", name))
+            .ToList();
 
         Plugin.BepinLogger.LogInfo($"Scouting shop locations with ids: {string.Join(", ", shopLocationIds)}");
 
@@ -393,114 +390,114 @@ internal class ProgressManagerPatch
         }
 
         while (Plugin.PendingSentItems.TryDequeue(out SentItemInfo sentItemInfo))
-        {
-            int count = BlocksLibraryPatch.CustomBlockData.Count();
-            int customId = -(count + 1);
-            var customBlockData = ScriptableObject.CreateInstance<BlockData>();
-
-            var BlockIdField = AccessTools.Field(typeof(BlockData), "BlockId");
-            var UISpriteField = AccessTools.Field(typeof(BlockData), "UISprite");
-            var IconField = AccessTools.Field(typeof(BlockData), "Icon");
-            var NameKeyField = AccessTools.Field(typeof(BlockData), "NameKey");
-
-            BlockIdField.SetValue(customBlockData, customId);
-            UISpriteField.SetValue(customBlockData, EditModeMenuPatch.ArchipelagoSprite);
-            IconField.SetValue(customBlockData, EditModeMenuPatch.ArchipelagoSDFSprite);
-            NameKeyField.SetValue(customBlockData, $"custom_{sentItemInfo.Item.ItemDisplayName} ({sentItemInfo.Item.ItemGame})");
-
-            BlocksLibraryPatch.CustomBlockData[customId] = customBlockData;
-            BlocksLibraryPatch.CustomBlockDataItemInfo[customId] = sentItemInfo.Item;
-            BlocksLibraryPatch.CustomBlockDataPlayerName[customId] = sentItemInfo.Recipient.Name;
-            BlocksLibraryPatch.CustomBlockDataOriginal[customId] = null;
-
-            NotificationsPatch.AllowQueueNotification = true;
-            AbstractSingleton<Notifications>.Instance.QueueNotification(NotificationType.ChallengeCompleted, customBlockData, null);
-            NotificationsPatch.AllowQueueNotification = false;
-        }
+            ProcessPendingSentItem(sentItemInfo);
 
         while (Plugin.PendingItems.TryDequeue(out ItemInfo itemInfo))
+            ProcessPendingReceivedItem(itemInfo);
+    }
+
+    // Show a notification on screen when this player's item reaches another player's world.
+    static void ProcessPendingSentItem(SentItemInfo sentItemInfo)
+    {
+        int count = BlocksLibraryPatch.CustomBlockData.Count();
+        int customId = -(count + 1);
+        var customBlockData = ScriptableObject.CreateInstance<BlockData>();
+
+        var BlockIdField = AccessTools.Field(typeof(BlockData), "BlockId");
+        var UISpriteField = AccessTools.Field(typeof(BlockData), "UISprite");
+        var IconField = AccessTools.Field(typeof(BlockData), "Icon");
+        var NameKeyField = AccessTools.Field(typeof(BlockData), "NameKey");
+
+        BlockIdField.SetValue(customBlockData, customId);
+        UISpriteField.SetValue(customBlockData, EditModeMenuPatch.ArchipelagoSprite);
+        IconField.SetValue(customBlockData, EditModeMenuPatch.ArchipelagoSDFSprite);
+        NameKeyField.SetValue(customBlockData, $"custom_{sentItemInfo.Item.ItemDisplayName} ({sentItemInfo.Item.ItemGame})");
+
+        BlocksLibraryPatch.CustomBlockData[customId] = customBlockData;
+        BlocksLibraryPatch.CustomBlockDataItemInfo[customId] = sentItemInfo.Item;
+        BlocksLibraryPatch.CustomBlockDataPlayerName[customId] = sentItemInfo.Recipient.Name;
+        BlocksLibraryPatch.CustomBlockDataOriginal[customId] = null;
+
+        NotificationsPatch.AllowQueueNotification = true;
+        AbstractSingleton<Notifications>.Instance.QueueNotification(NotificationType.ChallengeCompleted, customBlockData, null);
+        NotificationsPatch.AllowQueueNotification = false;
+    }
+
+    // Apply a single item received from the Archipelago server to the current game session.
+    static void ProcessPendingReceivedItem(ItemInfo itemInfo)
+    {
+        bool isFiller = itemInfo.ItemId >= Constants.Filler500GoldItemId;
+
+        bool unlockSilently = Plugin.UnlockedItemIds.Contains(itemInfo.ItemId);
+        // If according to the save file, the item was already "discovered"
+        // then we also unlock silently. But we have no way of detecting if the
+        // item recipe is unlocked but undiscovered.
+        var progressManager = AbstractSingleton<ProgressManager>.Instance;
+        var blocksProgressField = AccessTools.Field(typeof(ProgressManager), "blocksProgress");
+        var blocksProgress = (SortedDictionary<int, BlockProgress>)blocksProgressField.GetValue(progressManager);
+        if (blocksProgress.TryGetValue((int)itemInfo.ItemId, out var blockProgress))
         {
-            bool isFiller = itemInfo.ItemId >= Constants.Filler500GoldItemId;
-
-            bool unlockSilently = Plugin.UnlockedItemIds.Contains(itemInfo.ItemId);
-            // If according to the save file, the item was already "discovered"
-            // then we also unlock silently. But we have no way of detecting if the
-            // item recipe is unlocked but undiscovered.
-            var progressManager = AbstractSingleton<ProgressManager>.Instance;
-            var blocksProgressField = AccessTools.Field(typeof(ProgressManager), "blocksProgress");
-            var blocksProgress = (SortedDictionary<int, BlockProgress>)blocksProgressField.GetValue(progressManager);
-            if (blocksProgress.TryGetValue((int)itemInfo.ItemId, out var blockProgress))
-            {
-                if (blockProgress.isUnlocked)
-                {
-                    unlockSilently = true;
-                }
-            }
-
-            if (!isFiller && !Plugin.UnlockedItemIds.Contains(itemInfo.ItemId))
-            {
-                Plugin.UnlockedItemIds.Add(itemInfo.ItemId);
-            }
-
-            if (isFiller)
-            {
-                CurrencyManager currencyManager = AbstractSingleton<CurrencyManager>.Instance;
-                Sprite sprite = null;
-                if (itemInfo.ItemId == Constants.Filler500GoldItemId)
-                {
-                    // Gain 500 gold
-                    currencyManager.AddMoney(500);
-                    sprite = EditModeMenuPatch.MoneySprite;
-                }
-                else if (itemInfo.ItemId == Constants.Filler1000GoldItemId)
-                {
-                    // Gain 1000 gold
-                    currencyManager.AddMoney(1000);
-                    sprite = EditModeMenuPatch.MoneySprite;
-                }
-                else if (itemInfo.ItemId == Constants.Filler500ManaItemId)
-                {
-                    // Gain 500 mana
-                    currencyManager.AddMana(null, null, 500);
-                    sprite = EditModeMenuPatch.ManaSprite;
-                }
-                else if (itemInfo.ItemId == Constants.FillerFullStarpowerItemId)
-                {
-                    // Gain full starpower
-                    var StarShowerManager = AbstractSingleton<StarShowerManager>.Instance;
-                    StarShowerManager.FillGauge();
-                    sprite = EditModeMenuPatch.StarPowerSprite;
-                }
-                else
-                {
-                    Plugin.BepinLogger.LogWarning($"Received unknown filler item with id {itemInfo.ItemId}");
-                }
-
-                BlockData blockData = ScriptableObject.CreateInstance<BlockData>();
-                var BlockIdField = AccessTools.Field(typeof(BlockData), "BlockId");
-                var UISpriteField = AccessTools.Field(typeof(BlockData), "UISprite");
-                var IconField = AccessTools.Field(typeof(BlockData), "Icon");
-                BlockIdField.SetValue(blockData, (int)itemInfo.ItemId);
-                UISpriteField.SetValue(blockData, sprite);
-                IconField.SetValue(blockData, EditModeMenuPatch.ArchipelagoSDFSprite);
-                SendItemReceivedNotification(blockData, itemInfo, itemInfo.ItemDisplayName);
-
-            }
-            else if (ElementBlocksById.TryGetValue(itemInfo.ItemId, out BlockData blockData))
-            {
-                // It's an element block.
-                ApplyUnlock(blockData, itemInfo, unlockSilently);
-            }
-            else
-            {
-                // It's a machine block.
-                var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
-                var machineBlockData = lib.GetBlockDataById((int)itemInfo.ItemId);
-                ApplyUnlock(machineBlockData, itemInfo, unlockSilently);
-            }
-
+            if (blockProgress.isUnlocked)
+                unlockSilently = true;
         }
 
+        if (!isFiller && !Plugin.UnlockedItemIds.Contains(itemInfo.ItemId))
+            Plugin.UnlockedItemIds.Add(itemInfo.ItemId);
+
+        if (isFiller)
+        {
+            ApplyFillerItem(itemInfo);
+        }
+        else if (ElementBlocksById.TryGetValue(itemInfo.ItemId, out BlockData blockData))
+        {
+            ApplyUnlock(blockData, itemInfo, unlockSilently);
+        }
+        else
+        {
+            var lib = Resources.FindObjectsOfTypeAll<BlocksLibrary>()[0];
+            var machineBlockData = lib.GetBlockDataById((int)itemInfo.ItemId);
+            ApplyUnlock(machineBlockData, itemInfo, unlockSilently);
+        }
+    }
+
+    // Grant currency/resources for a filler item and show the received-item notification.
+    static void ApplyFillerItem(ItemInfo itemInfo)
+    {
+        CurrencyManager currencyManager = AbstractSingleton<CurrencyManager>.Instance;
+        Sprite sprite = null;
+        if (itemInfo.ItemId == Constants.Filler500GoldItemId)
+        {
+            currencyManager.AddMoney(500);
+            sprite = EditModeMenuPatch.MoneySprite;
+        }
+        else if (itemInfo.ItemId == Constants.Filler1000GoldItemId)
+        {
+            currencyManager.AddMoney(1000);
+            sprite = EditModeMenuPatch.MoneySprite;
+        }
+        else if (itemInfo.ItemId == Constants.Filler500ManaItemId)
+        {
+            currencyManager.AddMana(null, null, 500);
+            sprite = EditModeMenuPatch.ManaSprite;
+        }
+        else if (itemInfo.ItemId == Constants.FillerFullStarpowerItemId)
+        {
+            AbstractSingleton<StarShowerManager>.Instance.FillGauge();
+            sprite = EditModeMenuPatch.StarPowerSprite;
+        }
+        else
+        {
+            Plugin.BepinLogger.LogWarning($"Received unknown filler item with id {itemInfo.ItemId}");
+        }
+
+        BlockData blockData = ScriptableObject.CreateInstance<BlockData>();
+        var BlockIdField = AccessTools.Field(typeof(BlockData), "BlockId");
+        var UISpriteField = AccessTools.Field(typeof(BlockData), "UISprite");
+        var IconField = AccessTools.Field(typeof(BlockData), "Icon");
+        BlockIdField.SetValue(blockData, (int)itemInfo.ItemId);
+        UISpriteField.SetValue(blockData, sprite);
+        IconField.SetValue(blockData, EditModeMenuPatch.ArchipelagoSDFSprite);
+        SendItemReceivedNotification(blockData, itemInfo, itemInfo.ItemDisplayName);
     }
 
     static void SendItemReceivedNotification(BlockData blockData, ItemInfo itemInfo, string unlockText = null)

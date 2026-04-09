@@ -78,28 +78,30 @@ public static class ArchipelagoConsole
 
     public static void UpdateWindow()
     {
-        scrollText = "";
+        RebuildScrollText();
+        RecalculateLayout();
+    }
 
+    static void RebuildScrollText()
+    {
         if (Hidden)
         {
-            if (logLines.Count > 0)
-            {
-                scrollText = logLines[logLines.Count - 1];
-            }
+            scrollText = logLines.Count > 0 ? logLines[logLines.Count - 1] : "";
         }
         else
         {
+            scrollText = "";
             for (var i = 0; i < logLines.Count; i++)
             {
-                scrollText += "> ";
-                scrollText += logLines.ElementAt(i);
+                scrollText += "> " + logLines.ElementAt(i);
                 if (i < logLines.Count - 1)
-                {
                     scrollText += "\n\n";
-                }
             }
         }
+    }
 
+    static void RecalculateLayout()
+    {
         var width = (int)(Screen.width * 0.4f);
         int height;
         int scrollDepth;
@@ -126,23 +128,19 @@ public static class ArchipelagoConsole
 
         var xPadding = (int)(Screen.width * 0.01f);
         var yPadding = (int)(Screen.height * 0.01f);
-
         textStyle.padding = Hidden
             ? new RectOffset(xPadding / 2, xPadding / 2, yPadding / 2, yPadding / 2)
             : new RectOffset(xPadding, xPadding, yPadding, yPadding);
 
         var buttonWidth = (int)(Screen.width * 0.12f);
         var buttonHeight = (int)(Screen.height * 0.03f);
+        hideShowButton = new Rect(Screen.width / 2 + width / 2 + buttonWidth / 3, Screen.height * 0.004f, buttonWidth, buttonHeight);
 
-        hideShowButton = new Rect(Screen.width / 2 + width / 2 + buttonWidth / 3, Screen.height * 0.004f, buttonWidth,
-            buttonHeight);
-
-        // draw server command text field and button
+        // Command text field and send button
         width = (int)(Screen.width * 0.4f);
         var xPos = (int)(Screen.width / 2.0f - width / 2.0f);
         var yPos = (int)(Screen.height * 0.307f);
         height = (int)(Screen.height * 0.022f);
-
         CommandTextRect = new Rect(xPos, yPos, width, height);
 
         width = (int)(Screen.width * 0.035f);
