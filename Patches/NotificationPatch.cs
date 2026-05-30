@@ -1,3 +1,4 @@
+using Archipelago.MultiClient.Net.Models;
 using FakutoriArchipelago.Archipelago;
 using HarmonyLib;
 using I2.Loc;

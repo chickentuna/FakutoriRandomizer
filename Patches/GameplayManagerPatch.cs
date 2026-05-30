@@ -1,5 +1,6 @@
 using FakutoriArchipelago.Archipelago;
 using HarmonyLib;
+using UnityEngine;
 using UnityEngine.Events;
 
 namespace FakutoriArchipelago;

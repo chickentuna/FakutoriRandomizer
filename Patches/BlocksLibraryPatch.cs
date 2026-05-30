@@ -1,5 +1,7 @@
 using Archipelago.MultiClient.Net.Helpers;
+using Archipelago.MultiClient.Net.Models;
 using HarmonyLib;
+using System;
 using System.Collections.Generic;
 
 namespace FakutoriArchipelago;

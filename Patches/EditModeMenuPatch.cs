@@ -1,4 +1,5 @@
 using Archipelago.MultiClient.Net.Helpers;
+using Archipelago.MultiClient.Net.Models;
 using FakutoriArchipelago.Archipelago;
 using HarmonyLib;
 using System;

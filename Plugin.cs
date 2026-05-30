@@ -1,4 +1,5 @@
 using Archipelago.MultiClient.Net.Helpers;
+using Archipelago.MultiClient.Net.Models;
 using BepInEx;
 using BepInEx.Logging;
 using FakutoriArchipelago.Archipelago;
