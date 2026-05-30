@@ -372,18 +372,6 @@ internal class ProgressManagerPatch
             Plugin.CheckGoal();
         }
 
-        if (!Plugin.didBlockDump)
-        {
-            BlockDumper.Do();
-            Plugin.didBlockDump = true;
-        }
-
-        if (!Plugin.didRecipeDump)
-        {
-            RecipeDumper.Do();
-            Plugin.didRecipeDump = true;
-        }
-
         if (AbstractSingleton<GameplayManager>.Instance.state != GameplayManager.GameplayState.Watch
             && AbstractSingleton<GameplayManager>.Instance.state != GameplayManager.GameplayState.Edit)
         {

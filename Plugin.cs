@@ -1,6 +1,7 @@
 using Archipelago.MultiClient.Net.Helpers;
 using Archipelago.MultiClient.Net.Models;
 using BepInEx;
+using BepInEx.Configuration;
 using BepInEx.Logging;
 using FakutoriArchipelago.Archipelago;
 using FakutoriArchipelago.Utils;
@@ -25,8 +26,8 @@ public class Plugin : BaseUnityPlugin
     public static ManualLogSource BepinLogger;
     public static ArchipelagoClient ArchipelagoClient;
 
-    public static bool didRecipeDump = true;
-    public static bool didBlockDump = true;
+    // Dev hotkey to dump all blocks + recipes to JSON (for diffing against new game versions).
+    public static ConfigEntry<KeyboardShortcut> DumpHotkey;
 
     public static bool didInitShop = true;
     public static bool didInitUnlocks = true;
@@ -101,6 +102,12 @@ public class Plugin : BaseUnityPlugin
         ArchipelagoClient = new ArchipelagoClient();
         ArchipelagoConsole.Awake();
 
+        DumpHotkey = Config.Bind(
+            "Dev",
+            "DumpHotkey",
+            new KeyboardShortcut(KeyCode.F8),
+            "Press to dump all blocks and recipes to JSON (blocks_dump.json / recipes_dump.json) in the plugin folder. Useful for diffing against a new game version.");
+
         ArchipelagoConsole.LogMessage($"{ModDisplayInfo} loaded!");
         var harmony = new Harmony("com.chickentuna.archipelago");
         harmony.PatchAll();
@@ -109,6 +116,29 @@ public class Plugin : BaseUnityPlugin
         BlockIdsThatAreNotLocations.Add(Constants.BaseElement2BlockId);
         BlockIdsThatAreNotLocations.Add(Constants.BaseElement3BlockId);
         BlockIdsThatAreNotLocations.Add(Constants.BaseElement4BlockId);
+    }
+
+    public void Update()
+    {
+        if (DumpHotkey.Value.IsDown())
+        {
+            DumpGameData();
+        }
+    }
+
+    // Dumps every block and recipe the game has loaded. Requires the BlocksLibrary to exist,
+    // so a game/level must be loaded (it isn't present on the main menu).
+    public static void DumpGameData()
+    {
+        if (Resources.FindObjectsOfTypeAll<BlocksLibrary>().Length == 0)
+        {
+            ArchipelagoConsole.LogMessage("Can't dump yet — no BlocksLibrary loaded. Load a game/level first.");
+            return;
+        }
+
+        BlockDumper.Do();
+        RecipeDumper.Do();
+        ArchipelagoConsole.LogMessage("Dumped blocks + recipes to the plugin folder.");
     }
 
     //TODO: test this victory condition
