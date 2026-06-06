@@ -25,6 +25,7 @@ public class Plugin : BaseUnityPlugin
 
     public static ManualLogSource BepinLogger;
     public static ArchipelagoClient ArchipelagoClient;
+    public static ArchipelagoUI UI;
 
     // Dev hotkey to dump all blocks + recipes to JSON (for diffing against new game versions).
     public static ConfigEntry<KeyboardShortcut> DumpHotkey;

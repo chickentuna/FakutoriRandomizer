@@ -1,210 +1,198 @@
-﻿using FakutoriArchipelago.Archipelago;
+using System.Reflection;
+using FakutoriArchipelago.Archipelago;
+using HarmonyLib;
+using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
 namespace FakutoriArchipelago;
 
+// Connection panel built by CLONING the game's own native widgets (the TMP_InputField and Button
+// from ModalWindow, the popup the game uses for OpenPlayerNameModal). Cloning native widgets and
+// parenting them under the game's own canvas means we inherit its CanvasScaler / GraphicRaycaster,
+// so the hit areas line up with the cursor — fixing the old hand-built canvas where clicks landed
+// slightly above the visual. ModalWindow's widget fields are [SerializeField] private, so we read
+// the templates by reflection; UIManager.modalWindow itself is public.
 public class ArchipelagoUI : MonoBehaviour
 {
+    static readonly FieldInfo F_InputField = AccessTools.Field(typeof(ModalWindow), "InputField");
+    static readonly FieldInfo F_PrimaryButton = AccessTools.Field(typeof(ModalWindow), "PrimaryButton");
+    static readonly FieldInfo F_LabelText = AccessTools.Field(typeof(ModalWindow), "LabelText");
+    static readonly FieldInfo F_TitleText = AccessTools.Field(typeof(ModalWindow), "TitleText");
 
-    private GameObject root;
-    private Text statusText;
-    private InputField hostField;
-    private InputField playerField;
-    private InputField passwordField;
-    private Button connectButton;
+    GameObject panel;
+    TMP_InputField hostField;
+    TMP_InputField playerField;
+    TMP_InputField passwordField;
+    Button connectButton;
+    TMP_Text statusText;
+    bool built;
+    string lastDefer = "";
 
-    public void Init()
+    public void Tick()
     {
-        CreateUI();
+        // If the panel was destroyed along with its canvas on a scene transition, rebuild it.
+        if (built && panel == null) built = false;
+
+        if (!built) TryBuild();
+        if (!built) return;
+
+        var titleScreen = Object.FindObjectOfType<TitleScreen>();
+        bool onTitle = titleScreen != null && titleScreen.gameObject.activeSelf;
+        UpdateUI(onTitle);
     }
 
-    public void OnTick()
+    void Defer(string reason)
     {
-        var titleScreen = UnityEngine.Object.FindObjectOfType<TitleScreen>();
-        if (titleScreen != null)
+        if (reason == lastDefer) return;
+        lastDefer = reason;
+        Plugin.BepinLogger.LogInfo($"ArchipelagoUI: waiting — {reason}");
+    }
+
+    void TryBuild()
+    {
+        try
         {
-            UpdateUI(titleScreen.gameObject.activeSelf);
+            var uiManager = AbstractSingleton<UIManager>.Instance;
+            if (uiManager == null) { Defer("UIManager null"); return; }
+
+            var modal = uiManager.modalWindow;
+            if (modal == null) { Defer("modalWindow null"); return; }
+
+            var inputTemplate = F_InputField.GetValue(modal) as TMP_InputField;
+            var buttonTemplate = F_PrimaryButton.GetValue(modal) as Button;
+            var labelTemplate = (F_LabelText.GetValue(modal) ?? F_TitleText.GetValue(modal)) as TMP_Text;
+            if (inputTemplate == null) { Defer("InputField template null"); return; }
+            if (buttonTemplate == null) { Defer("Button template null"); return; }
+            if (labelTemplate == null) { Defer("Label template null"); return; }
+
+            var canvas = modal.GetComponentInParent<Canvas>(true);
+            if (canvas == null) { Defer("no parent Canvas on modal"); return; }
+
+            BuildPanel(canvas, inputTemplate, buttonTemplate, labelTemplate);
+            built = true;
+
+            hostField.text = ArchipelagoClient.ServerData.Uri ?? "";
+            playerField.text = ArchipelagoClient.ServerData.SlotName ?? "";
+            passwordField.text = ArchipelagoClient.ServerData.Password ?? "";
+
+            Plugin.BepinLogger.LogInfo("ArchipelagoUI: connection panel built.");
         }
-        else
+        catch (System.Exception e)
         {
-            UpdateUI(false);
+            Plugin.BepinLogger.LogError("ArchipelagoUI: TryBuild failed — " + e);
         }
     }
 
-    Text CreateText(string name, string content, Vector2 pos, Font font)
+    void BuildPanel(Canvas canvas, TMP_InputField inputTemplate, Button buttonTemplate, TMP_Text labelTemplate)
     {
-        var go = new GameObject(name);
-        go.transform.SetParent(root.transform);
+        panel = new GameObject("ArchipelagoPanel", typeof(RectTransform), typeof(Image), typeof(VerticalLayoutGroup));
+        panel.transform.SetParent(canvas.transform, false);
 
-        var text = go.AddComponent<Text>();
-        text.font = font;
-        text.text = content;
-        text.color = Color.white;
+        var prt = (RectTransform)panel.transform;
+        prt.anchorMin = prt.anchorMax = prt.pivot = new Vector2(0f, 1f);  // top-left
+        prt.anchoredPosition = new Vector2(40f, -40f);
+        prt.sizeDelta = new Vector2(440f, 340f);
 
-        var rect = text.GetComponent<RectTransform>();
-        rect.anchorMin = new Vector2(0, 1);
-        rect.anchorMax = new Vector2(0, 1);
-        rect.pivot = new Vector2(0, 1);
-        rect.anchoredPosition = pos;
-        rect.sizeDelta = new Vector2(300, 20);
+        panel.GetComponent<Image>().color = new Color(0f, 0f, 0f, 0.6f);
 
-        return text;
+        var vlg = panel.GetComponent<VerticalLayoutGroup>();
+        vlg.padding = new RectOffset(16, 16, 16, 16);
+        vlg.spacing = 8f;
+        vlg.childAlignment = TextAnchor.UpperLeft;
+        vlg.childControlWidth = true;
+        vlg.childControlHeight = false;
+        vlg.childForceExpandWidth = true;
+        vlg.childForceExpandHeight = false;
+
+        CloneLabel(labelTemplate, Plugin.ModDisplayInfo, 28f, 34f);
+        statusText = CloneLabel(labelTemplate, "", 20f, 26f);
+
+        hostField = CloneField(inputTemplate, "Host (e.g. archipelago.gg:38281)");
+        playerField = CloneField(inputTemplate, "Slot name");
+        passwordField = CloneField(inputTemplate, "Password (optional)");
+        passwordField.contentType = TMP_InputField.ContentType.Password;
+        passwordField.ForceLabelUpdate();
+
+        connectButton = CloneButton(buttonTemplate, "Connect");
+        connectButton.onClick.AddListener(OnConnectClicked);
     }
 
-    InputField CreateInput(string name, Vector2 pos, Font font)
+    TMP_Text CloneLabel(TMP_Text template, string text, float fontSize, float height)
     {
-        var go = new GameObject(name);
-        go.transform.SetParent(root.transform, false);
+        var clone = Instantiate(template.gameObject, panel.transform, false);
+        clone.name = "Label";
+        clone.SetActive(true);
+        var t = clone.GetComponent<TMP_Text>();
+        t.text = text;
+        t.fontSize = fontSize;
+        Normalize(clone, height);
+        return t;
+    }
 
-        var image = go.AddComponent<Image>();
-        image.color = Color.white;
-
-        var input = go.AddComponent<InputField>();
-
-        // Create Text for input
-        var textGO = new GameObject("Text");
-        textGO.transform.SetParent(go.transform, false);
-        var text = textGO.AddComponent<Text>();
-        text.font = font;
-        text.text = "";
-        text.color = Color.black;
-        text.alignment = TextAnchor.MiddleLeft;
-
-        input.textComponent = text;
-
-        // RectTransform for input field
-        var rect = go.GetComponent<RectTransform>();
-        rect.anchorMin = new Vector2(0, 1);
-        rect.anchorMax = new Vector2(0, 1);
-        rect.pivot = new Vector2(0, 1);
-        rect.anchoredPosition = pos;
-        rect.sizeDelta = new Vector2(250, 20);
-
+    TMP_InputField CloneField(TMP_InputField template, string placeholder)
+    {
+        var clone = Instantiate(template.gameObject, panel.transform, false);
+        clone.name = "Field";
+        clone.SetActive(true);
+        var input = clone.GetComponent<TMP_InputField>();
+        // Drop any listeners the modal had serialized/wired on its template field.
+        input.onValueChanged = new TMP_InputField.OnChangeEvent();
+        input.onEndEdit = new TMP_InputField.SubmitEvent();
+        input.onSubmit = new TMP_InputField.SubmitEvent();
+        input.contentType = TMP_InputField.ContentType.Standard;
+        input.text = "";
+        if (input.placeholder is TMP_Text ph) ph.text = placeholder;
+        Normalize(clone, 44f);
         return input;
     }
 
-
-
-
-
-    void CreateUI()
+    Button CloneButton(Button template, string label)
     {
-        Plugin.BepinLogger.LogInfo("UI creation");
-
-        // Canvas
-        var canvasGO = new GameObject("ArchipelagoCanvas");
-        var canvas = canvasGO.AddComponent<Canvas>();
-        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-        canvasGO.AddComponent<CanvasScaler>();
-        canvasGO.AddComponent<GraphicRaycaster>();
-
-        root = canvasGO;
-
-        Font font = Resources.GetBuiltinResource<Font>("Arial.ttf");
-
-        int x = 816;
-        int y = -16;
-        int sepY = -30;
-        int curY = y;
-
-        // Mod label
-        CreateText("ModInfo", Plugin.ModDisplayInfo, new Vector2(x, curY), font);
-        curY += sepY;
-
-        statusText = CreateText("StatusText", "", new Vector2(x, curY), font);
-        curY += sepY;
-
-        hostField = CreateInput("HostField", new Vector2(x + 134, curY), font);
-        CreateText("HostLabel", "Host:", new Vector2(x, curY), font);
-        curY += sepY;
-
-        playerField = CreateInput("PlayerField", new Vector2(x + 134, curY), font);
-        CreateText("PlayerLabel", "Player Name:", new Vector2(x, curY), font);
-        curY += sepY;
-
-        passwordField = CreateInput("PasswordField", new Vector2(x + 134, curY), font);
-        CreateText("PasswordLabel", "Password:", new Vector2(x, curY), font);
-        curY += sepY;
-
-        connectButton = CreateButton("ConnectButton", "Connect", new Vector2(x, curY), font);
-        connectButton.onClick.AddListener(OnConnectClicked);
-
-
-        hostField.text = ArchipelagoClient.ServerData.Uri;
-        playerField.text = ArchipelagoClient.ServerData.SlotName;
-        passwordField.text = ArchipelagoClient.ServerData.Password;
-
-
+        var clone = Instantiate(template.gameObject, panel.transform, false);
+        clone.name = "ConnectButton";
+        clone.SetActive(true);
+        var btn = clone.GetComponent<Button>();
+        btn.onClick = new Button.ButtonClickedEvent();
+        var t = clone.GetComponentInChildren<TMP_Text>(true);
+        if (t != null) t.text = label;
+        Normalize(clone, 52f);
+        return btn;
     }
 
-    Button CreateButton(string name, string label, Vector2 pos, Font font)
+    // Reset the clone's root anchors so the VerticalLayoutGroup positions it predictably, and pin a
+    // preferred height (layout group controls width).
+    static void Normalize(GameObject go, float preferredHeight)
     {
-        var go = new GameObject(name);
-        go.transform.SetParent(root.transform, false);
-
-        var image = go.AddComponent<Image>();
-        image.color = Color.white; // you can keep clear if you want invisible
-
-        var button = go.AddComponent<Button>();
-
-        // Create Text as a proper child of the button
-        var textGO = new GameObject("ButtonText");
-        textGO.transform.SetParent(go.transform, false); // false keeps local position
-        var text = textGO.AddComponent<Text>();
-        text.font = font;
-        text.text = label;
-        text.alignment = TextAnchor.MiddleCenter;
-        text.color = Color.black;
-
-        // Make text fill the button
-        var textRect = text.GetComponent<RectTransform>();
-        textRect.anchorMin = Vector2.zero;
-        textRect.anchorMax = Vector2.one;
-        textRect.offsetMin = Vector2.zero;
-        textRect.offsetMax = Vector2.zero;
-
-        // Position and size of button itself
-        var rect = go.GetComponent<RectTransform>();
-        rect.anchorMin = new Vector2(0, 1);
-        rect.anchorMax = new Vector2(0, 1);
-        rect.pivot = new Vector2(0, 1);
-        rect.anchoredPosition = pos;
-        rect.sizeDelta = new Vector2(100, 20);
-
-        return button;
+        var rt = go.GetComponent<RectTransform>();
+        rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(0f, 1f);
+        var le = go.GetComponent<LayoutElement>() ?? go.AddComponent<LayoutElement>();
+        le.minHeight = le.preferredHeight = preferredHeight;
     }
-    
-    void UpdateUI(bool show)
+
+    void UpdateUI(bool onTitle)
     {
-        if (show)
-        {
-            root.SetActive(true);
-        }
-        else
-        {
-            root.SetActive(false);
-            return;
-        }
+        panel.SetActive(onTitle);
+        if (!onTitle) return;
+
         if (ArchipelagoClient.Authenticated)
         {
-            statusText.text = Plugin.APDisplayInfo + " Status: Connected";
-
-            hostField.gameObject.SetActive(false);
-            playerField.gameObject.SetActive(false);
-            passwordField.gameObject.SetActive(false);
-            connectButton.gameObject.SetActive(false);
+            statusText.text = Plugin.APDisplayInfo + " — Connected";
+            SetInputsActive(false);
         }
         else
         {
-            statusText.text = Plugin.APDisplayInfo + " Status: Disconnected";
-
-            hostField.gameObject.SetActive(true);
-            playerField.gameObject.SetActive(true);
-            passwordField.gameObject.SetActive(true);
-            connectButton.gameObject.SetActive(true);
-
+            statusText.text = Plugin.APDisplayInfo + " — Disconnected";
+            SetInputsActive(true);
         }
+    }
+
+    void SetInputsActive(bool active)
+    {
+        hostField.gameObject.SetActive(active);
+        playerField.gameObject.SetActive(active);
+        passwordField.gameObject.SetActive(active);
+        connectButton.gameObject.SetActive(active);
     }
 
     void OnConnectClicked()

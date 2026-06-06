@@ -100,15 +100,15 @@ internal class ProgressManagerPatch
     static void PostStart(ProgressManager __instance)
     {
         Plugin.BepinLogger.LogInfo("ProgressManager Start called");
+
+        if (Plugin.UI == null)
+        {
+            var go = new GameObject("ArchipelagoUI");
+            UnityEngine.Object.DontDestroyOnLoad(go);
+            Plugin.UI = go.AddComponent<ArchipelagoUI>();
+        }
+
         AbstractSingleton<TimeManager>.Instance.OnTick.AddListener(OnGameTick);
-
-        var go = new GameObject("ArchipelagoUI");
-        var ui = go.AddComponent<ArchipelagoUI>();
-
-        //TODO: rebuild UI using the sam lib as unity explorer
-
-        ui.Init();
-        AbstractSingleton<TimeManager>.Instance.OnTick.AddListener(ui.OnTick);
 
         var ElementBlocksField = AccessTools.Field(typeof(BlocksLibrary), "ElementBlocks");
         var MachineBlocksField = AccessTools.Field(typeof(BlocksLibrary), "MachineBlocks");
@@ -352,6 +352,8 @@ internal class ProgressManagerPatch
 
     static void OnGameTick()
     {
+        Plugin.UI?.Tick();
+
         if (!Plugin.didInitUnlocks && ArchipelagoClient.Authenticated)
         {
             InitUnlocks();
