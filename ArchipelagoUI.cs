@@ -16,6 +16,7 @@ public class ArchipelagoUI : MonoBehaviour
     TMP_InputField playerField;
     TMP_InputField passwordField;
     Button connectButton;
+    TMP_Text connectButtonLabel;
     TMP_Text statusText;
     bool built;
 
@@ -63,6 +64,7 @@ public class ArchipelagoUI : MonoBehaviour
         passwordField.ForceLabelUpdate();
 
         connectButton = CloneButton(buttonTemplate, "Connect");
+        connectButtonLabel = connectButton.GetComponentInChildren<TMP_Text>(true);
         connectButton.onClick.AddListener(OnConnectClicked);
 
         hostField.text = ArchipelagoClient.ServerData.Uri ?? "";
@@ -104,7 +106,10 @@ public class ArchipelagoUI : MonoBehaviour
         hostField.interactable = editable;
         playerField.interactable = editable;
         passwordField.interactable = editable;
-        connectButton.interactable = editable;
+
+        // The button toggles to "Disconnect" while connected; it's only disabled mid-attempt.
+        if (connectButtonLabel != null) connectButtonLabel.text = connected ? "Disconnect" : "Connect";
+        connectButton.interactable = !connecting;
     }
 
     TMP_Text CloneLabel(TMP_Text template, string text, float fontSize, float height)
@@ -166,6 +171,12 @@ public class ArchipelagoUI : MonoBehaviour
 
     void OnConnectClicked()
     {
+        if (ArchipelagoClient.Authenticated)
+        {
+            Plugin.ArchipelagoClient.Disconnect();
+            return;
+        }
+
         ArchipelagoClient.ServerData.Uri = hostField.text;
         ArchipelagoClient.ServerData.SlotName = playerField.text;
         ArchipelagoClient.ServerData.Password = passwordField.text;

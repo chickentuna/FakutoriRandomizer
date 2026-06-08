@@ -62,10 +62,13 @@ public class ArchipelagoClient
         switch (message)
         {
             case ItemSendLogMessage itemSendLogMessage:
-                PlayerInfo receiverSlot = itemSendLogMessage.Receiver;
-                ItemInfo item = itemSendLogMessage.Item;
-
-                Plugin.AddToPendingSentItems(item, receiverSlot);
+                // This message fires for every send between any two players in the multiworld. Only
+                // show a "you sent X" notification when WE are the sender (AddToPendingSentItems also
+                // filters out sends to ourselves).
+                if (itemSendLogMessage.IsSenderTheActivePlayer)
+                {
+                    Plugin.AddToPendingSentItems(itemSendLogMessage.Item, itemSendLogMessage.Receiver);
+                }
                 break;
             default:
                 // for all other LogMessage types (e.g. plain text, generic prints)
@@ -141,7 +144,7 @@ public class ArchipelagoClient
     /// <summary>
     /// something went wrong, or we need to properly disconnect from the server. cleanup and re null our session
     /// </summary>
-    private void Disconnect()
+    public void Disconnect()
     {
         Plugin.BepinLogger.LogDebug("disconnecting from server...");
         session?.Socket.DisconnectAsync();
