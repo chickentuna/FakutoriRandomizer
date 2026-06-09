@@ -25,6 +25,11 @@ public class BlockDump
     public bool unlockedByDefault;
     public string color;
     public string[] properties;
+
+    // Block challenge (each block has at most one). null type = no challenge.
+    public string challengeType;    // e.g. "MakeCopiesOfBlock", "BurnBlocks", "UseInCombiner"
+    public int challengeTotal;      // the N the challenge requires (GetTotal())
+    public string challengeStatus;  // only for ApplyStatusToBlocks: the status name
 }
 
 public class BlockDumper
@@ -48,19 +53,36 @@ public class BlockDumper
         var dumps = blocks
             .Where(block => block != null)
             .OrderBy(block => block.blockId)
-            .Select(block => new BlockDump
+            .Select(block =>
             {
-                id = block.blockId,
-                nameKey = (string)NameKeyField.GetValue(block),
-                blockName = block.blockName,
-                category = block.category?.name,
-                showInCompendium = block.showInCompendium,
-                unlockedByDefault = block.unlockedByDefault,
-                color = block.color?.colorName,
-                properties = block.properties?
-                    .Where(p => p?.property != null)
-                    .Select(p => p.property.ToString())
-                    .ToArray()
+                var dump = new BlockDump
+                {
+                    id = block.blockId,
+                    nameKey = (string)NameKeyField.GetValue(block),
+                    blockName = block.blockName,
+                    category = block.category?.name,
+                    showInCompendium = block.showInCompendium,
+                    unlockedByDefault = block.unlockedByDefault,
+                    color = block.color?.colorName,
+                    properties = block.properties?
+                        .Where(p => p?.property != null)
+                        .Select(p => p.property.ToString())
+                        .ToArray()
+                };
+
+                var challenge = block.challenge;
+                if (challenge != null)
+                {
+                    dump.challengeType = challenge.GetType().Name;
+                    dump.challengeTotal = challenge.GetTotal();
+
+                    // ApplyStatusToBlocks carries a private BlockStatus Status field.
+                    var statusField = AccessTools.Field(challenge.GetType(), "Status");
+                    if (statusField?.GetValue(challenge) is BlockStatus status)
+                        dump.challengeStatus = status.statusName;
+                }
+
+                return dump;
             }).ToArray();
 
         var collection = new BlockCollection { blocks = dumps };
