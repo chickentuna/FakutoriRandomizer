@@ -96,7 +96,11 @@ public class ArchipelagoUI : MonoBehaviour
         string state = connected ? "connected" : connecting ? "connecting" : "disconnected";
         if (state == shownState) return;
         shownState = state;
-        if (connected) connectingUntil = 0f;
+        if (connected)
+        {
+            connectingUntil = 0f;
+            Plugin.SaveLastConnection();  // remember a successful connection for next launch
+        }
 
         statusText.text = Plugin.APDisplayInfo + (connected ? " — Connected"
                                                 : connecting ? " — Connecting…"

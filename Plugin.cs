@@ -29,6 +29,19 @@ public class Plugin : BaseUnityPlugin
     // Dev hotkey to dump all blocks + recipes to JSON (for diffing against new game versions).
     public static ConfigEntry<KeyboardShortcut> DumpHotkey;
 
+    // Last successful connection, persisted so the connect form pre-fills on restart.
+    public static ConfigEntry<string> LastUri;
+    public static ConfigEntry<string> LastSlot;
+
+    // Persist the current connection details. Call once a connection succeeds. Setting a ConfigEntry
+    // value writes the config file automatically.
+    public static void SaveLastConnection()
+    {
+        if (LastUri == null) return;
+        LastUri.Value = ArchipelagoClient.ServerData.Uri ?? "";
+        LastSlot.Value = ArchipelagoClient.ServerData.SlotName ?? "";
+    }
+
     public static bool didInitShop = true;
     public static bool didInitUnlocks = true;
 
@@ -110,6 +123,14 @@ public class Plugin : BaseUnityPlugin
             "DumpHotkey",
             new KeyboardShortcut(KeyCode.F8),
             "Press to dump all blocks and recipes to JSON (blocks_dump.json / recipes_dump.json) in the plugin folder. Useful for diffing against a new game version.");
+
+        // Remember the last successful connection so the connect form pre-fills it after a restart.
+        LastUri = Config.Bind("Connection", "LastUri", ArchipelagoClient.ServerData.Uri,
+            "Host:port of the last Archipelago server you connected to successfully.");
+        LastSlot = Config.Bind("Connection", "LastSlot", ArchipelagoClient.ServerData.SlotName,
+            "Slot name of the last successful Archipelago connection.");
+        ArchipelagoClient.ServerData.Uri = LastUri.Value;
+        ArchipelagoClient.ServerData.SlotName = LastSlot.Value;
 
         ArchipelagoConsole.LogMessage($"{ModDisplayInfo} loaded!");
         var harmony = new Harmony("com.chickentuna.archipelago");
