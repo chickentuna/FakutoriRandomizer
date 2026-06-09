@@ -114,6 +114,18 @@ internal class ProgressManagerPatch
             {
                 var BlockIdField = AccessTools.Field(typeof(BlockData), "BlockId");
                 BlockIdField.SetValue(blockData, Constants.MachinePlaceholderBlockId); // Setting this block id to 100 because zero is not allowed by archipelago
+
+                // ResetAllProgress() (in the Start we're post-fixing) already added this machine's
+                // progress entry under its old id 0. Re-key it to the new id, otherwise
+                // OnMachineBlockSpawned's raw blocksProgress[id] lookup throws KeyNotFoundException
+                // when the machine loads from a save (LoadBlocks runs before DeserializeProgress).
+                var blocksProgressField = AccessTools.Field(typeof(ProgressManager), "blocksProgress");
+                var blocksProgress = (SortedDictionary<int, BlockProgress>)blocksProgressField.GetValue(__instance);
+                if (blocksProgress.TryGetValue(0, out var bp) && !blocksProgress.ContainsKey(Constants.MachinePlaceholderBlockId))
+                {
+                    blocksProgress.Remove(0);
+                    blocksProgress[Constants.MachinePlaceholderBlockId] = bp;
+                }
             }
 
             OriginalBlockUnlockCosts.Add(blockData.blockId, blockData.unlockCost);
@@ -373,6 +385,10 @@ internal class ProgressManagerPatch
         while (Plugin.PendingSentItems.TryDequeue(out SentItemInfo sentItemInfo))
             ProcessPendingSentItem(sentItemInfo);
 
+        // Silent items (already in the loaded save) rebuild unlock state without notifications.
+        while (Plugin.PendingSilentItems.TryDequeue(out ItemInfo silentItem))
+            ProcessPendingReceivedItem(silentItem, forceSilent: true);
+
         while (Plugin.PendingItems.TryDequeue(out ItemInfo itemInfo))
             ProcessPendingReceivedItem(itemInfo);
     }
@@ -405,11 +421,16 @@ internal class ProgressManagerPatch
     }
 
     // Apply a single item received from the Archipelago server to the current game session.
-    static void ProcessPendingReceivedItem(ItemInfo itemInfo)
+    // forceSilent is set when replaying items already reflected in the loaded save: rebuild unlock
+    // state without notifications, and never re-grant already-applied filler currency.
+    static void ProcessPendingReceivedItem(ItemInfo itemInfo, bool forceSilent = false)
     {
         bool isFiller = itemInfo.ItemId >= Constants.Filler500GoldItemId;
 
-        bool unlockSilently = Plugin.UnlockedItemIds.Contains(itemInfo.ItemId);
+        if (forceSilent && isFiller)
+            return;
+
+        bool unlockSilently = forceSilent || Plugin.UnlockedItemIds.Contains(itemInfo.ItemId);
         // If according to the save file, the item was already "discovered"
         // then we also unlock silently. But we have no way of detecting if the
         // item recipe is unlocked but undiscovered.

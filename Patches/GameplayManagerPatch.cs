@@ -15,22 +15,34 @@ class GameplayManagerPatch
         BlocksLibraryPatch.CustomBlockDataPlayerName.Clear();
         Plugin.UnlockedItemIds.Clear();
         Plugin.PendingItems.Clear();
+        Plugin.PendingSilentItems.Clear();
         Plugin.BepinLogger.LogInfo($"Resetting archipelago progress...");
 
         Plugin.didInitUnlocks = false;
         Plugin.didInitShop = false;
 
-        Plugin.BepinLogger.LogInfo($"Pushing history:");
+        // apIndex (from the save's .apindex side file) = how many history items were already applied
+        // and saved. Items before it rebuild unlock state silently; items at/after it are new since the
+        // save and get their notifications.
+        int apIndex = ArchipelagoClient.ServerData.Index;
+
+        Plugin.BepinLogger.LogInfo($"Pushing history (apIndex {apIndex}):");
         for (int i = 0; i < Plugin.ReceivedItemHistory.Count; i++)
         {
             var item = Plugin.ReceivedItemHistory[i];
+            bool alreadyApplied = i < apIndex;
+            bool isFiller = item.ItemId >= Constants.Filler500GoldItemId;
 
-            if (ArchipelagoClient.ServerData.Index > i && item.ItemId >= Constants.Filler500GoldItemId)
+            if (alreadyApplied)
             {
-                Plugin.BepinLogger.LogInfo($"   filler id {item.ItemName} (index {i} already applied)");
-                continue;
+                // Filler currency is already in the save — don't re-grant. Unlocks are re-applied
+                // silently to rebuild UnlockedItemIds / recipes without spamming notifications.
+                if (isFiller)
+                    Plugin.BepinLogger.LogInfo($"   filler {item.ItemName} (index {i} already applied)");
+                else
+                    Plugin.PendingSilentItems.Enqueue(item);
             }
-            if (!Plugin.UnlockedItemIds.Contains(item.ItemId))
+            else
             {
                 Plugin.BepinLogger.LogInfo($"   item: {item.ItemName}");
                 Plugin.PendingItems.Enqueue(item);

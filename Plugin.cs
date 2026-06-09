@@ -35,6 +35,9 @@ public class Plugin : BaseUnityPlugin
     public static bool didInitIcons = false;
 
     public static ConcurrentQueue<ItemInfo> PendingItems = new();
+    // Items already reflected in the loaded save (history index < saved apIndex): re-applied to rebuild
+    // unlock state on load, but WITHOUT notifications (otherwise every prior unlock spams on load).
+    public static ConcurrentQueue<ItemInfo> PendingSilentItems = new();
     public static List<ItemInfo> ReceivedItemHistory = new();
     public static ConcurrentQueue<SentItemInfo> PendingSentItems = new();
     public static List<long> UnlockedItemIds = new();
